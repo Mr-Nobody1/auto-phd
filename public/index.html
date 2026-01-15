@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhDApply - AI Application Assistant</title>
+  <link rel="stylesheet" href="/public/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <span class="logo-icon">🎓</span>
+          <span class="logo-text">PhDApply</span>
+        </div>
+        <p class="tagline">AI-Powered PhD Application Assistant</p>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Input Form Section -->
+      <section id="form-section" class="section form-section">
+        <div class="section-header">
+          <h2>Application Details</h2>
+          <p>Enter the professor and position details to generate personalized application materials.</p>
+        </div>
+
+        <form id="application-form" class="form">
+          <!-- Professor Info -->
+          <div class="form-group">
+            <label for="professorName">Professor Name <span class="required">*</span></label>
+            <input 
+              type="text" 
+              id="professorName" 
+              name="professorName" 
+              placeholder="e.g., Dr. Maria Schmidt"
+              required
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="university">University <span class="required">*</span></label>
+            <input 
+              type="text" 
+              id="university" 
+              name="university" 
+              placeholder="e.g., Technical University of Munich"
+              required
+            >
+          </div>
+
+          <!-- Position Details -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="language">Position Language <span class="required">*</span></label>
+              <select id="language" name="language" required>
+                <option value="english">English</option>
+                <option value="german">German</option>
+                <option value="french">French</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="customLanguageGroup" style="display: none;">
+              <label for="customLanguage">Specify Language</label>
+              <input 
+                type="text" 
+                id="customLanguage" 
+                name="customLanguage" 
+                placeholder="e.g., Spanish"
+              >
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="fundingStatus">Funding Status <span class="required">*</span></label>
+              <select id="fundingStatus" name="fundingStatus" required>
+                <option value="fully_funded">Fully Funded</option>
+                <option value="partially_funded">Partially Funded</option>
+                <option value="self_funded">Self Funded</option>
+                <option value="seeking_funding">Looking for Funding</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="preferredStart">Preferred Start Date</label>
+              <select id="preferredStart" name="preferredStart">
+                <option value="Fall 2026">Fall 2026</option>
+                <option value="Spring 2026">Spring 2026</option>
+                <option value="Fall 2027">Fall 2027</option>
+                <option value="As soon as possible">As Soon As Possible</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Research Interests -->
+          <div class="form-group">
+            <label for="researchInterests">Your Research Interests</label>
+            <textarea 
+              id="researchInterests" 
+              name="researchInterests" 
+              placeholder="e.g., Machine Learning, Natural Language Processing, Large Language Models, RAG systems..."
+              rows="3"
+            ></textarea>
+          </div>
+
+          <!-- File Upload -->
+          <div class="form-group">
+            <label for="cvFile">Upload Your CV <span class="required">*</span></label>
+            <div class="file-upload" id="cvUpload">
+              <input 
+                type="file" 
+                id="cvFile" 
+                name="cvFile" 
+                accept=".pdf"
+                required
+              >
+              <div class="file-upload-content">
+                <span class="file-icon">📄</span>
+                <span class="file-text" id="cvFileName">Click to upload or drag & drop (PDF)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" class="btn btn-primary" id="submitBtn">
+            <span class="btn-icon">🚀</span>
+            <span class="btn-text">Generate Application Materials</span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Progress Section -->
+      <section id="progress-section" class="section progress-section" style="display: none;">
+        <div class="section-header">
+          <h2>🔄 Generating Your Application</h2>
+          <p id="overall-status">Processing...</p>
+        </div>
+
+        <div class="progress-container">
+          <div class="agent-list" id="agent-list">
+            <!-- Agent items will be inserted here -->
+          </div>
+
+          <div class="current-agent-box" id="current-agent-box">
+            <div class="current-agent-label">Current Agent</div>
+            <div class="current-agent-name" id="current-agent-name">Initializing...</div>
+            <div class="current-agent-action" id="current-agent-action">Starting pipeline...</div>
+            <div class="time-elapsed">
+              <span>Time elapsed:</span>
+              <span id="time-elapsed">0:00</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Results Section -->
+      <section id="results-section" class="section results-section" style="display: none;">
+        <div class="section-header">
+          <h2>✅ Application Materials Ready</h2>
+          <p>Review and download your personalized application materials below.</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+          <button class="tab active" data-tab="email">📧 Email</button>
+          <button class="tab" data-tab="cv">📄 CV Recommendations</button>
+          <button class="tab" data-tab="motivation">💭 Motivation Letter</button>
+          <button class="tab" data-tab="proposal">📋 Research Proposal</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="tab-content">
+          <!-- Email Tab -->
+          <div class="tab-pane active" id="tab-email">
+            <div class="result-card">
+              <div class="result-header">
+                <h3>Subject Line Options</h3>
+              </div>
+              <div class="subject-lines" id="subject-lines">
+                <!-- Subject lines will be inserted here -->
+              </div>
+            </div>
+
+            <div class="result-card">
+              <div class="result-header">
+                <h3>Email Body</h3>
+                <button class="btn btn-small" onclick="copyToClipboard('email-body')">📋 Copy</button>
+              </div>
+              <div class="result-content" id="email-body">
+                <!-- Email body will be inserted here -->
+              </div>
+              <div class="result-meta">
+                <span id="email-word-count">0 words</span>
+                <span id="email-paper-ref">Referenced paper: </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- CV Tab -->
+          <div class="tab-pane" id="tab-cv">
+            <div class="result-card">
+              <div class="result-header">
+                <h3>Recommended Updates</h3>
+              </div>
+              <div class="cv-updates" id="cv-updates">
+                <!-- CV updates will be inserted here -->
+              </div>
+            </div>
+
+            <div class="result-card">
+              <div class="result-header">
+                <h3>Keep As-Is</h3>
+              </div>
+              <div class="cv-keeps" id="cv-keeps">
+                <!-- Keep items will be inserted here -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Motivation Letter Tab -->
+          <div class="tab-pane" id="tab-motivation">
+            <div class="result-card">
+              <div class="result-header">
+                <h3>Motivation Letter</h3>
+                <button class="btn btn-small" onclick="copyToClipboard('motivation-letter')">📋 Copy</button>
+              </div>
+              <div class="result-content motivation-letter" id="motivation-letter">
+                <!-- Motivation letter will be inserted here -->
+              </div>
+              <div class="result-meta">
+                <span id="motivation-word-count">0 words</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Research Proposal Tab -->
+          <div class="tab-pane" id="tab-proposal">
+            <div class="result-card">
+              <div class="result-header">
+                <h3 id="proposal-title">Research Proposal</h3>
+                <button class="btn btn-small" onclick="copyToClipboard('research-proposal')">📋 Copy</button>
+              </div>
+              <div class="result-content research-proposal" id="research-proposal">
+                <!-- Research proposal will be inserted here -->
+              </div>
+              <div class="result-meta">
+                <span id="proposal-word-count">0 words</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Start New Button -->
+        <button class="btn btn-secondary" id="startNewBtn" onclick="startNew()">
+          Start New Application
+        </button>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>PhDApply — Powered by Gemini AI</p>
+    </footer>
+  </div>
+
+  <script src="/public/app.js"></script>
+</body>
+</html>
