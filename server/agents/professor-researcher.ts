@@ -1,16 +1,13 @@
 import { callGeminiJSON } from '../tools/gemini';
-import {
-  findFacultyPage,
-  findScholarProfile,
-  scrapeUrl,
-  scrapeScholarPapers,
-  searchGoogleScholar,
-} from '../tools/browser';
-import type { ProfessorProfile } from '../types';
+import { findFacultyPage, scrapeFacultyPage } from '../tools/browser';
+import { searchAuthor, downloadOpenAccessPdf, type AcademicPaper } from '../tools/academic-api';
+import { parsePDFBuffer } from '../tools/pdf';
+import type { ProfessorProfile, Paper } from '../types';
 
 /**
  * Professor Researcher Agent
- * Researches professor's work, papers, and contact info
+ * Uses Semantic Scholar / OpenAlex APIs for papers
+ * Uses browser only for faculty page scraping
  */
 export async function researchProfessor(
   professorName: string,
@@ -18,91 +15,131 @@ export async function researchProfessor(
   onStatus: (status: string) => void
 ): Promise<ProfessorProfile> {
   const sources: string[] = [];
-  let facultyPageContent = '';
-  let scholarPapers: { title: string; year: string; citations: string; url: string }[] = [];
 
-  // Step 1: Find and scrape faculty page
+  // Step 1: Search academic APIs for papers (no scraping!)
+  onStatus('Searching academic databases...');
+  const authorProfile = await searchAuthor(professorName, university);
+  
+  let papers: AcademicPaper[] = [];
+  if (authorProfile) {
+    papers = authorProfile.papers;
+    console.log(`✅ Found ${papers.length} papers via API`);
+    if (authorProfile.affiliation) {
+      sources.push(`Academic Profile: ${authorProfile.affiliation}`);
+    }
+  }
+
+  // Step 2: Find and scrape faculty page for bio, email, etc.
   onStatus('Searching for faculty page...');
   const facultyUrl = await findFacultyPage(professorName, university);
+  
+  let facultyInfo = {
+    bio: '',
+    researchInterests: [] as string[],
+    email: null as string | null,
+    labUrl: null as string | null,
+    labName: null as string | null,
+    openPositions: null as string | null,
+  };
 
   if (facultyUrl) {
     sources.push(facultyUrl);
-    onStatus(`Found faculty page, extracting information...`);
-    try {
-      facultyPageContent = await scrapeUrl(facultyUrl);
-    } catch (error) {
-      console.error('Failed to scrape faculty page:', error);
-      facultyPageContent = '';
-    }
+    onStatus('Extracting faculty page information...');
+    facultyInfo = await scrapeFacultyPage(facultyUrl);
+    console.log(`✅ Scraped faculty page, email: ${facultyInfo.email || 'not found'}`);
   }
 
-  // Step 2: Find Google Scholar profile and papers
-  onStatus('Searching Google Scholar...');
-  const scholarUrl = await findScholarProfile(professorName);
-
-  if (scholarUrl) {
-    sources.push(scholarUrl);
-    onStatus('Extracting recent publications...');
+  // Step 3: Download open access PDFs for context
+  onStatus('Downloading open access papers...');
+  const paperContents: Map<string, string> = new Map();
+  
+  // Only download papers that have open access PDFs
+  const openAccessPapers = papers.filter(p => p.pdfUrl);
+  console.log(`📚 ${openAccessPapers.length} papers have open access PDFs`);
+  
+  for (const paper of openAccessPapers.slice(0, 2)) {
     try {
-      scholarPapers = await scrapeScholarPapers(scholarUrl, 8);
+      onStatus(`Downloading: ${paper.title.slice(0, 40)}...`);
+      const pdfBuffer = await downloadOpenAccessPdf(paper.pdfUrl!);
+      
+      if (pdfBuffer) {
+        const buffer = Buffer.from(pdfBuffer);
+        const text = await parsePDFBuffer(buffer);
+        if (text && text.length > 100) {
+          paperContents.set(paper.title, text.slice(0, 5000));
+          console.log(`✅ Extracted ${text.length} chars from: ${paper.title.slice(0, 50)}`);
+        }
+      }
     } catch (error) {
-      console.error('Failed to scrape scholar papers:', error);
+      console.log(`⚠️ Could not process paper: ${paper.title.slice(0, 30)}`);
     }
-  }
-
-  // Step 3: If no Scholar results, try direct search
-  if (scholarPapers.length === 0) {
-    onStatus('Searching for papers directly...');
-    const searchResults = await searchGoogleScholar(`author:"${professorName}"`, 5);
-    scholarPapers = searchResults.map((r) => ({
-      title: r.title,
-      year: '',
-      citations: '',
-      url: r.url,
-    }));
   }
 
   // Step 4: Use Gemini to synthesize the profile
   onStatus('Analyzing professor profile...');
 
-  const synthesisPrompt = `Based on the following information about a professor, create a comprehensive research profile.
+  // Build paper content section
+  let paperContentSection = '';
+  if (paperContents.size > 0) {
+    paperContentSection = '\n\nDOWNLOADED PAPER CONTENTS:';
+    for (const [title, content] of paperContents) {
+      paperContentSection += `\n\n--- "${title}" ---\n${content.slice(0, 2500)}`;
+    }
+  }
+
+  const papersDescription = papers
+    .slice(0, 8)
+    .map((p, i) => `${i + 1}. "${p.title}" (${p.year}) - ${p.citationCount} citations\n   ${p.abstract?.slice(0, 200) || 'No abstract'}`)
+    .join('\n');
+
+  const synthesisPrompt = `Based on the following information, create a comprehensive professor profile.
 
 PROFESSOR NAME: ${professorName}
 UNIVERSITY: ${university}
 
-FACULTY PAGE CONTENT:
-${facultyPageContent.slice(0, 4000) || 'Not available'}
+FACULTY PAGE INFO:
+Email: ${facultyInfo.email || 'Not found'}
+Lab: ${facultyInfo.labName || 'Not mentioned'}
+Open Positions: ${facultyInfo.openPositions || 'Not mentioned'}
+Bio: ${facultyInfo.bio.slice(0, 2000) || 'Not available'}
 
-GOOGLE SCHOLAR PAPERS:
-${scholarPapers.map((p) => `- ${p.title} (${p.year}) - ${p.citations} citations`).join('\n') || 'Not available'}
+ACADEMIC RECORD (from Semantic Scholar/OpenAlex):
+${authorProfile ? `
+- Total Papers: ${authorProfile.paperCount}
+- Total Citations: ${authorProfile.citationCount}
+- H-Index: ${authorProfile.hIndex || 'Unknown'}
+- Affiliation: ${authorProfile.affiliation || university}
+` : 'Not found'}
 
-Create a JSON profile with this structure:
+RECENT PAPERS:
+${papersDescription || 'No papers found'}
+${paperContentSection}
+
+Create a JSON profile:
 {
   "name": "${professorName}",
-  "title": "Their academic title (e.g., Associate Professor)",
+  "title": "Their academic title",
   "university": "${university}",
-  "department": "Their department name",
-  "email": "Their email if found, or null",
-  "emailSource": "URL where email was found, or null",
-  "researchInterests": ["List of 3-5 main research areas"],
+  "department": "Department name",
+  "email": ${facultyInfo.email ? `"${facultyInfo.email}"` : 'null'},
+  "emailSource": ${facultyUrl ? `"${facultyUrl}"` : 'null'},
+  "researchInterests": ["List 3-5 main research areas based on papers"],
   "recentPapers": [
     {
       "title": "Paper title",
       "year": 2024,
-      "abstract": "Brief description or key contribution",
-      "url": "Paper URL if available",
-      "venue": "Conference or journal name if known"
+      "abstract": "Key contribution",
+      "url": "Paper URL",
+      "venue": "Journal/Conference"
     }
   ],
-  "currentProjects": ["Any mentioned ongoing projects or grants"],
-  "labInfo": "Brief description of their lab or research group",
-  "labUrl": "Lab website URL if found",
-  "openPositions": "Any mentioned PhD positions or opportunities, or null"
+  "currentProjects": ["Inferred from recent papers"],
+  "labInfo": "${facultyInfo.labName || 'Unknown'}",
+  "labUrl": ${facultyInfo.labUrl ? `"${facultyInfo.labUrl}"` : 'null'},
+  "openPositions": ${facultyInfo.openPositions ? `"${facultyInfo.openPositions.slice(0, 200)}"` : 'null'}
 }
 
-Be accurate - only include information that can be inferred from the provided content.
-For papers, include only the most recent and relevant ones (max 5).
-If information is not available, use null or empty arrays.`;
+Include max 5 most relevant recent papers. Be accurate.`;
 
   const profile = await callGeminiJSON<ProfessorProfile>(synthesisPrompt, {
     useProModel: true,
@@ -111,16 +148,31 @@ If information is not available, use null or empty arrays.`;
   // Add sources
   profile.sources = sources;
 
-  // Ensure papers have proper structure
+  // Ensure papers have proper structure with downloaded content
   if (!profile.recentPapers || profile.recentPapers.length === 0) {
-    profile.recentPapers = scholarPapers.slice(0, 5).map((p) => ({
+    profile.recentPapers = papers.slice(0, 5).map((p) => ({
       title: p.title,
-      year: parseInt(p.year) || new Date().getFullYear(),
-      abstract: '',
+      year: p.year,
+      abstract: p.abstract || '',
       url: p.url,
-      venue: '',
+      venue: p.venue,
+      pdfUrl: p.pdfUrl,
     }));
   }
+
+  // Add fullText to papers
+  profile.recentPapers = profile.recentPapers.map((paper: Paper) => {
+    const content = paperContents.get(paper.title);
+    if (content) {
+      return { ...paper, fullText: content };
+    }
+    // Also check if we have the paper in our API results
+    const apiPaper = papers.find(p => p.title === paper.title);
+    if (apiPaper?.pdfUrl) {
+      return { ...paper, pdfUrl: apiPaper.pdfUrl };
+    }
+    return paper;
+  });
 
   onStatus('Professor research complete');
 

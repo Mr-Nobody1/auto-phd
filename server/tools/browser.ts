@@ -1,50 +1,71 @@
-import { chromium, type Browser } from 'playwright';
+/**
+ * Browser utilities for faculty page scraping only
+ * Google Scholar is replaced with academic APIs (see academic-api.ts)
+ */
+
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
 let browserInstance: Browser | null = null;
 
-/**
- * Get or create browser instance
- * Checks if existing browser is still connected before returning
- */
+// ============ Stealth Configuration ============
+
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+];
+
+const VIEWPORTS = [
+  { width: 1920, height: 1080 },
+  { width: 1366, height: 768 },
+  { width: 1536, height: 864 },
+];
+
+function randomChoice<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]!;
+}
+
+function randomDelay(minMs: number, maxMs: number): Promise<void> {
+  const delay = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+// ============ Browser Management ============
+
 async function getBrowser(): Promise<Browser> {
-  // Check if browser exists and is still connected
   if (browserInstance && browserInstance.isConnected()) {
     return browserInstance;
   }
-  
-  // Clean up disconnected browser reference
+
   if (browserInstance) {
     console.log('⚠️ Browser was disconnected, relaunching...');
     browserInstance = null;
   }
-  
+
   console.log('🌐 Launching browser...');
-  try {
-    browserInstance = await chromium.launch({
-      headless: false,
-      channel: 'chrome',
-      timeout: 60000,
-      args: ['--remote-debugging-port=0'], // Use WebSocket instead of pipe
-    });
-    
-    // Handle browser disconnect event
-    browserInstance.on('disconnected', () => {
-      console.log('⚠️ Browser disconnected');
-      browserInstance = null;
-    });
-    
-    console.log('✅ Browser launched successfully');
-  } catch (error) {
-    console.error('❌ Failed to launch browser:', error);
-    throw error;
-  }
-  
+  browserInstance = await chromium.launch({
+    headless: false, // Can be headless now since we're not dealing with Google
+    channel: 'chrome',
+    timeout: 60000,
+    args: ['--disable-blink-features=AutomationControlled'],
+  });
+
+  browserInstance.on('disconnected', () => {
+    console.log('⚠️ Browser disconnected');
+    browserInstance = null;
+  });
+
+  console.log('✅ Browser launched');
   return browserInstance;
 }
 
-/**
- * Close browser instance
- */
+async function createContext(browser: Browser): Promise<BrowserContext> {
+  return browser.newContext({
+    userAgent: randomChoice(USER_AGENTS),
+    viewport: randomChoice(VIEWPORTS),
+  });
+}
+
 export async function closeBrowser(): Promise<void> {
   if (browserInstance) {
     await browserInstance.close();
@@ -52,201 +73,67 @@ export async function closeBrowser(): Promise<void> {
   }
 }
 
-/**
- * Scrape a webpage and extract text content
- */
-export async function scrapeUrl(url: string): Promise<string> {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  });
+// ============ Faculty Page Scraping ============
 
-  const page = await context.newPage();
-
-  try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-    // Wait a bit for dynamic content
-    await page.waitForTimeout(2000);
-
-    // Extract main text content
-    const content = await page.evaluate(() => {
-      // Remove script and style elements
-      const scripts = document.querySelectorAll('script, style, nav, footer, header');
-      scripts.forEach((el: Element) => el.remove());
-
-      // Get text from main content areas
-      const main = document.querySelector('main, article, .content, #content, .main');
-      if (main) {
-        return main.textContent || '';
-      }
-
-      return document.body.textContent || '';
-    });
-
-    return content.replace(/\s+/g, ' ').trim();
-  } catch (error) {
-    console.error(`Failed to scrape ${url}:`, error);
-    throw new Error(`Failed to scrape URL: ${error}`);
-  } finally {
-    await context.close();
-  }
+export interface FacultyPageInfo {
+  bio: string;
+  researchInterests: string[];
+  email: string | null;
+  labUrl: string | null;
+  labName: string | null;
+  openPositions: string | null;
+  pageUrl: string;
 }
 
 /**
- * Search Google and get top results
- */
-export async function searchGoogle(query: string, numResults: number = 5): Promise<string[]> {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  });
-
-  const page = await context.newPage();
-
-  try {
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-    await page.waitForTimeout(2000);
-
-    // Extract search result URLs
-    const links = await page.evaluate(() => {
-      const results: string[] = [];
-      const anchors = document.querySelectorAll('a[href^="http"]');
-
-      anchors.forEach((a: Element) => {
-        const href = a.getAttribute('href');
-        if (
-          href &&
-          !href.includes('google.com') &&
-          !href.includes('youtube.com') &&
-          !href.includes('maps.google')
-        ) {
-          results.push(href);
-        }
-      });
-
-      return results;
-    });
-
-    return links.slice(0, numResults);
-  } catch (error) {
-    console.error('Google search failed:', error);
-    return [];
-  } finally {
-    await context.close();
-  }
-}
-
-/**
- * Search Google Scholar for papers
- */
-export async function searchGoogleScholar(
-  query: string,
-  numResults: number = 5
-): Promise<{ title: string; url: string; snippet: string }[]> {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  });
-
-  const page = await context.newPage();
-
-  try {
-    const searchUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`;
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-    await page.waitForTimeout(3000);
-
-    // Extract paper information
-    const papers = await page.evaluate(() => {
-      const results: { title: string; url: string; snippet: string }[] = [];
-      const items = document.querySelectorAll('.gs_ri');
-
-      items.forEach((item: Element) => {
-        const titleEl = item.querySelector('.gs_rt a');
-        const snippetEl = item.querySelector('.gs_rs');
-
-        if (titleEl) {
-          results.push({
-            title: titleEl.textContent || '',
-            url: titleEl.getAttribute('href') || '',
-            snippet: snippetEl?.textContent || '',
-          });
-        }
-      });
-
-      return results;
-    });
-
-    return papers.slice(0, numResults);
-  } catch (error) {
-    console.error('Scholar search failed:', error);
-    return [];
-  } finally {
-    await context.close();
-  }
-}
-
-/**
- * Find professor's faculty page
+ * Search Google for a professor's faculty page
  */
 export async function findFacultyPage(
   professorName: string,
   university: string
 ): Promise<string | null> {
-  const query = `"${professorName}" "${university}" professor site:.edu OR site:.ac.uk OR site:.de`;
-  const results = await searchGoogle(query, 5);
-
-  // Filter for likely faculty pages
-  for (const url of results) {
-    if (
-      url.includes('faculty') ||
-      url.includes('people') ||
-      url.includes('staff') ||
-      url.includes('professor') ||
-      url.includes('team')
-    ) {
-      return url;
-    }
-  }
-
-  return results[0] || null;
-}
-
-/**
- * Find professor's Google Scholar profile
- */
-export async function findScholarProfile(professorName: string): Promise<string | null> {
   const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  });
-
+  const context = await createContext(browser);
   const page = await context.newPage();
 
   try {
-    const searchUrl = `https://scholar.google.com/citations?view_op=search_authors&mauthors=${encodeURIComponent(
-      professorName
-    )}`;
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const query = `"${professorName}" "${university}" professor site:.edu OR site:.ac.uk`;
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    
+    await randomDelay(500, 1500);
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await randomDelay(1000, 2000);
 
-    await page.waitForTimeout(2000);
-
-    // Get first author profile link
-    const profileUrl = await page.evaluate(() => {
-      const link = document.querySelector('.gs_ai_name a');
-      return link ? 'https://scholar.google.com' + link.getAttribute('href') : null;
+    const links = await page.evaluate(() => {
+      const results: string[] = [];
+      const anchors = document.querySelectorAll('a[href^="http"]');
+      anchors.forEach((a) => {
+        const href = a.getAttribute('href');
+        if (href && !href.includes('google.com')) {
+          results.push(href);
+        }
+      });
+      return results;
     });
 
-    return profileUrl;
+    // Filter for likely faculty pages
+    for (const url of links) {
+      if (
+        url.includes('faculty') ||
+        url.includes('people') ||
+        url.includes('staff') ||
+        url.includes('professor') ||
+        url.includes('~') || // Personal pages often use ~username
+        url.includes('team')
+      ) {
+        console.log(`✅ Found faculty page: ${url}`);
+        return url;
+      }
+    }
+
+    return links[0] || null;
   } catch (error) {
-    console.error('Scholar profile search failed:', error);
+    console.error('Faculty page search failed:', error);
     return null;
   } finally {
     await context.close();
@@ -254,59 +141,142 @@ export async function findScholarProfile(professorName: string): Promise<string 
 }
 
 /**
- * Scrape papers from a Google Scholar profile
+ * Scrape a faculty page for professor information
  */
-export async function scrapeScholarPapers(
-  profileUrl: string,
-  numPapers: number = 5
-): Promise<{ title: string; year: string; citations: string; url: string }[]> {
+export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
   const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  });
-
+  const context = await createContext(browser);
   const page = await context.newPage();
 
   try {
-    // Sort by date to get recent papers
-    const sortedUrl = profileUrl.includes('?')
-      ? `${profileUrl}&sortby=pubdate`
-      : `${profileUrl}?sortby=pubdate`;
+    console.log(`📄 Scraping faculty page: ${url}`);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await randomDelay(1000, 2000);
 
-    await page.goto(sortedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-    await page.waitForTimeout(3000);
-
-    // Extract paper information
-    const papers = await page.evaluate(() => {
-      const results: { title: string; year: string; citations: string; url: string }[] = [];
-      const rows = document.querySelectorAll('.gsc_a_tr');
-
-      rows.forEach((row: Element) => {
-        const titleEl = row.querySelector('.gsc_a_at');
-        const yearEl = row.querySelector('.gsc_a_y span');
-        const citationsEl = row.querySelector('.gsc_a_c a');
-
-        if (titleEl) {
-          results.push({
-            title: titleEl.textContent || '',
-            year: yearEl?.textContent || '',
-            citations: citationsEl?.textContent || '0',
-            url: titleEl.getAttribute('href')
-              ? 'https://scholar.google.com' + titleEl.getAttribute('href')
-              : '',
-          });
+    const info = await page.evaluate(() => {
+      // Get page text
+      const bodyText = document.body.innerText || '';
+      
+      // Extract email using regex patterns
+      const emailPatterns = [
+        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+        /mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g,
+      ];
+      
+      let email: string | null = null;
+      for (const pattern of emailPatterns) {
+        const matches = bodyText.match(pattern) || document.body.innerHTML.match(pattern);
+        if (matches && matches.length > 0) {
+          email = matches[0].replace('mailto:', '');
+          break;
+        }
+      }
+      
+      // Look for research interests section
+      const interestKeywords = ['research interest', 'research area', 'focus', 'expertise'];
+      let researchSection = '';
+      const sections = document.querySelectorAll('p, li, div');
+      sections.forEach((el) => {
+        const text = el.textContent?.toLowerCase() || '';
+        if (interestKeywords.some(k => text.includes(k))) {
+          researchSection += ' ' + (el.textContent || '');
         }
       });
-
-      return results;
+      
+      // Look for lab links
+      let labUrl: string | null = null;
+      let labName: string | null = null;
+      const labKeywords = ['lab', 'group', 'research group', 'team'];
+      document.querySelectorAll('a').forEach((a) => {
+        const text = a.textContent?.toLowerCase() || '';
+        if (labKeywords.some(k => text.includes(k))) {
+          labUrl = a.href;
+          labName = a.textContent?.trim() || null;
+        }
+      });
+      
+      // Check for open positions
+      let openPositions: string | null = null;
+      const positionKeywords = ['phd position', 'phd student', 'opening', 'hiring', 'seeking', 'looking for'];
+      sections.forEach((el) => {
+        const text = el.textContent?.toLowerCase() || '';
+        if (positionKeywords.some(k => text.includes(k))) {
+          openPositions = el.textContent?.trim() || null;
+        }
+      });
+      
+      return {
+        bio: bodyText.slice(0, 3000), // First 3000 chars as bio
+        researchSection,
+        email,
+        labUrl,
+        labName,
+        openPositions,
+      };
     });
 
-    return papers.slice(0, numPapers);
+    // Extract research interests from the research section
+    const researchInterests: string[] = [];
+    if (info.researchSection) {
+      // Simple extraction - split by common delimiters
+      const parts = info.researchSection.split(/[,;•\n]/);
+      for (const part of parts) {
+        const cleaned = part.trim();
+        if (cleaned.length > 5 && cleaned.length < 100) {
+          researchInterests.push(cleaned);
+        }
+      }
+    }
+
+    return {
+      bio: info.bio,
+      researchInterests: researchInterests.slice(0, 10),
+      email: info.email,
+      labUrl: info.labUrl,
+      labName: info.labName,
+      openPositions: info.openPositions,
+      pageUrl: url,
+    };
   } catch (error) {
-    console.error('Scholar papers scrape failed:', error);
-    return [];
+    console.error('Faculty page scrape failed:', error);
+    return {
+      bio: '',
+      researchInterests: [],
+      email: null,
+      labUrl: null,
+      labName: null,
+      openPositions: null,
+      pageUrl: url,
+    };
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * Scrape any URL and extract text content
+ */
+export async function scrapeUrl(url: string): Promise<string> {
+  const browser = await getBrowser();
+  const context = await createContext(browser);
+  const page = await context.newPage();
+
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await randomDelay(1000, 2000);
+
+    const content = await page.evaluate(() => {
+      const scripts = document.querySelectorAll('script, style, nav, footer');
+      scripts.forEach((el) => el.remove());
+      
+      const main = document.querySelector('main, article, .content, #content');
+      return main ? main.textContent || '' : document.body.textContent || '';
+    });
+
+    return content.replace(/\s+/g, ' ').trim();
+  } catch (error) {
+    console.error(`Failed to scrape ${url}:`, error);
+    throw error;
   } finally {
     await context.close();
   }

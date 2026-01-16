@@ -37,7 +37,14 @@ Open Positions: ${professorProfile.openPositions || 'Not specified'}
 
 RECENT PAPERS:
 ${professorProfile.recentPapers
-  .map((p, i) => `${i + 1}. "${p.title}" (${p.year})${p.abstract ? ` - ${p.abstract}` : ''}`)
+  .map((p, i) => {
+    let paperInfo = `${i + 1}. "${p.title}" (${p.year})${p.abstract ? ` - ${p.abstract}` : ''}`;
+    // Include full text excerpt if available for more detailed analysis
+    if (p.fullText) {
+      paperInfo += `\n   PAPER CONTENT EXCERPT: ${p.fullText.slice(0, 1500)}...`;
+    }
+    return paperInfo;
+  })
   .join('\n')}
 
 Provide a detailed fit analysis as JSON:

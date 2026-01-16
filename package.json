@@ -14,6 +14,7 @@
   "type": "module",
   "devDependencies": {
     "@hono/node-server": "^1.19.9",
+    "@types/node": "^25.0.9",
     "playwright": "1.58.0-alpha-2026-01-15",
     "tsx": "^4.21.0"
   }

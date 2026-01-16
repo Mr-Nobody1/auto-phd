@@ -59,6 +59,8 @@ export interface Paper {
   url: string;
   venue?: string;
   authors?: string[];
+  fullText?: string; // Downloaded paper content
+  pdfUrl?: string; // Direct PDF link if available
 }
 
 export interface ProfessorProfile {

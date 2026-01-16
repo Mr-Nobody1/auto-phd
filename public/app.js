@@ -184,13 +184,17 @@ function updateAgentStatus(status) {
 }
 
 function handleComplete(result) {
+  console.log('✅ handleComplete called with result:', result);
   currentResults = result;
   stopTimer();
 
   if (result.success) {
+    console.log('✅ Pipeline successful, switching to results view');
     showSection('results');
     renderResults(result);
+    console.log('✅ Results rendered');
   } else {
+    console.error('❌ Pipeline failed:', result.error);
     alert('Generation failed: ' + (result.error || 'Unknown error'));
     showSection('form');
   }
