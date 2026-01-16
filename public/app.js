@@ -19,11 +19,12 @@ const timeElapsed = document.getElementById('time-elapsed');
 const AGENTS = [
   { step: 1, name: 'CV Parser', icon: '📄' },
   { step: 2, name: 'Professor Researcher', icon: '🔍' },
-  { step: 3, name: 'Fit Analyzer', icon: '🎯' },
-  { step: 4, name: 'Email Writer', icon: '✉️' },
-  { step: 5, name: 'CV Recommender', icon: '📝' },
-  { step: 6, name: 'Motivation Letter Writer', icon: '💭' },
-  { step: 7, name: 'Research Proposal Writer', icon: '📋' },
+  { step: 3, name: 'Paper Selector', icon: '📚' },
+  { step: 4, name: 'Fit Analyzer', icon: '🎯' },
+  { step: 5, name: 'Email Writer', icon: '✉️' },
+  { step: 6, name: 'CV Recommender', icon: '📝' },
+  { step: 7, name: 'Motivation Letter Writer', icon: '💭' },
+  { step: 8, name: 'Research Proposal Writer', icon: '📋' },
 ];
 
 // ============ Initialization ============
@@ -250,6 +251,31 @@ function stopTimer() {
 }
 
 // ============ Results View ============
+
+// Helper to parse markdown content safely
+function parseMarkdown(text) {
+  if (!text) return '';
+  try {
+    // Use marked.js to parse markdown
+    if (typeof marked !== 'undefined') {
+      return marked.parse(text);
+    }
+    // Fallback: escape HTML and preserve newlines
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  } catch (e) {
+    console.error('Markdown parsing error:', e);
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  }
+}
+
+// Get raw text from element (for copy function)
+function getRawText(elementId) {
+  const element = document.getElementById(elementId);
+  if (!element) return '';
+  // Get the raw text from data attribute if available
+  return element.dataset.rawText || element.textContent;
+}
+
 function renderResults(result) {
   // Email
   if (result.email) {
@@ -282,9 +308,11 @@ function renderEmail(email) {
     </div>
   `).join('');
 
-  // Email body
+  // Email body with markdown support
   const emailBody = document.getElementById('email-body');
-  emailBody.textContent = email.body;
+  emailBody.classList.add('markdown-content');
+  emailBody.innerHTML = parseMarkdown(email.body);
+  emailBody.dataset.rawText = email.body; // Store raw text for copying
 
   // Meta
   document.getElementById('email-word-count').textContent = `${email.wordCount} words`;
@@ -327,7 +355,9 @@ function renderCVRecommendations(cvRecs) {
 
 function renderMotivationLetter(letter) {
   const letterEl = document.getElementById('motivation-letter');
-  letterEl.textContent = letter.letter;
+  letterEl.classList.add('markdown-content');
+  letterEl.innerHTML = parseMarkdown(letter.letter);
+  letterEl.dataset.rawText = letter.letter; // Store raw text for copying
   document.getElementById('motivation-word-count').textContent = `${letter.wordCount} words`;
 }
 
@@ -335,22 +365,24 @@ function renderResearchProposal(proposal) {
   document.getElementById('proposal-title').textContent = proposal.title || 'Research Proposal';
 
   const proposalEl = document.getElementById('research-proposal');
+  proposalEl.classList.add('markdown-content');
   
-  // Format proposal with sections
+  // Format proposal with markdown sections
   let content = '';
   if (proposal.abstract) {
-    content += `ABSTRACT\n\n${proposal.abstract}\n\n`;
+    content += `## Abstract\n\n${proposal.abstract}\n\n`;
   }
   
   proposal.sections.forEach(section => {
-    content += `${section.heading.toUpperCase()}\n\n${section.content}\n\n`;
+    content += `## ${section.heading}\n\n${section.content}\n\n`;
   });
 
-  if (proposal.references.length > 0) {
-    content += `REFERENCES\n\n${proposal.references.map((r, i) => `[${i + 1}] ${r}`).join('\n')}`;
+  if (proposal.references && proposal.references.length > 0) {
+    content += `## References\n\n${proposal.references.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
   }
 
-  proposalEl.textContent = content;
+  proposalEl.innerHTML = parseMarkdown(content);
+  proposalEl.dataset.rawText = content; // Store raw text for copying
   document.getElementById('proposal-word-count').textContent = `${proposal.wordCount} words`;
 }
 
@@ -394,7 +426,8 @@ function copyToClipboard(elementId, text) {
   
   if (elementId) {
     const element = document.getElementById(elementId);
-    textToCopy = element.textContent;
+    // Use raw text from data attribute if available (for markdown content)
+    textToCopy = element.dataset.rawText || element.textContent;
   }
 
   navigator.clipboard.writeText(textToCopy).then(() => {

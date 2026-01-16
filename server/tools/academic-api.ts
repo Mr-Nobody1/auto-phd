@@ -34,17 +34,17 @@ const SEMANTIC_SCHOLAR_API = 'https://api.semanticscholar.org/graph/v1';
 
 /**
  * Search for an author by name on Semantic Scholar
+ * Searches by name only, then matches by affiliation if provided
  */
 export async function searchAuthorSemanticScholar(
   authorName: string,
   affiliation?: string
 ): Promise<AuthorProfile | null> {
   try {
-    // Search for author
-    const searchQuery = affiliation ? `${authorName} ${affiliation}` : authorName;
-    const searchUrl = `${SEMANTIC_SCHOLAR_API}/author/search?query=${encodeURIComponent(searchQuery)}&limit=5`;
+    // Search by name only (not including university to avoid mismatches)
+    const searchUrl = `${SEMANTIC_SCHOLAR_API}/author/search?query=${encodeURIComponent(authorName)}&limit=10`;
     
-    console.log(`🔍 Semantic Scholar: Searching for "${searchQuery}"...`);
+    console.log(`🔍 Semantic Scholar: Searching for "${authorName}"...`);
     
     const searchRes = await fetch(searchUrl, {
       headers: { 'Accept': 'application/json' }
@@ -55,16 +55,47 @@ export async function searchAuthorSemanticScholar(
       return null;
     }
     
-    const searchData = await searchRes.json() as { data: { authorId: string; name: string }[] };
+    const searchData = await searchRes.json() as { data: { authorId: string; name: string; affiliations?: string[] }[] };
     
     if (!searchData.data || searchData.data.length === 0) {
       console.log(`⚠️ No authors found for "${authorName}"`);
       return null;
     }
     
-    // Get first matching author (could improve with affiliation matching)
-    const authorId = searchData.data[0].authorId;
-    console.log(`✅ Found author ID: ${authorId}`);
+    console.log(`📋 Found ${searchData.data.length} author candidates`);
+    
+    // Try to find best match by affiliation
+    const firstResult = searchData.data[0];
+    let authorId = firstResult?.authorId ?? '';
+    let matchedByAffiliation = false;
+    
+    if (affiliation) {
+      const affiliationLower = affiliation.toLowerCase();
+      for (const author of searchData.data) {
+        // Need to get full details to check affiliation
+        const detailUrl = `${SEMANTIC_SCHOLAR_API}/author/${author.authorId}?fields=name,affiliations`;
+        try {
+          const detailRes = await fetch(detailUrl, { headers: { 'Accept': 'application/json' } });
+          if (detailRes.ok) {
+            const detail = await detailRes.json() as { affiliations?: string[] };
+            if (detail.affiliations?.some(a => a.toLowerCase().includes(affiliationLower))) {
+              authorId = author.authorId;
+              matchedByAffiliation = true;
+              console.log(`✅ Matched author by affiliation: ${author.name}`);
+              break;
+            }
+          }
+        } catch {
+          // Continue with next candidate
+        }
+      }
+    }
+    
+    if (!matchedByAffiliation && firstResult) {
+      console.log(`⚠️ Could not match by affiliation, using first result: ${firstResult.name}`);
+    }
+    
+    console.log(`✅ Selected author ID: ${authorId}`);
     
     // Get author details with papers
     const authorUrl = `${SEMANTIC_SCHOLAR_API}/author/${authorId}?fields=name,affiliations,paperCount,citationCount,hIndex,papers.title,papers.year,papers.abstract,papers.venue,papers.citationCount,papers.url,papers.openAccessPdf,papers.externalIds`;
@@ -97,6 +128,13 @@ export async function searchAuthorSemanticScholar(
       }[];
     };
     
+    console.log(`📊 Author Profile:`);
+    console.log(`   Name: ${authorData.name}`);
+    console.log(`   Affiliations: ${authorData.affiliations?.join(', ') || 'Unknown'}`);
+    console.log(`   Total Papers: ${authorData.paperCount}`);
+    console.log(`   Citations: ${authorData.citationCount}`);
+    console.log(`   H-Index: ${authorData.hIndex || 'Unknown'}`);
+    
     // Transform papers
     const papers: AcademicPaper[] = (authorData.papers || [])
       .filter(p => p.year) // Filter out papers without year
@@ -114,7 +152,10 @@ export async function searchAuthorSemanticScholar(
         doi: p.externalIds?.DOI,
       }));
     
-    console.log(`✅ Found ${papers.length} papers, ${papers.filter(p => p.pdfUrl).length} with open access PDFs`);
+    console.log(`📚 Found ${papers.length} papers, ${papers.filter(p => p.pdfUrl).length} with open access PDFs`);
+    papers.slice(0, 3).forEach((p, i) => {
+      console.log(`   ${i+1}. "${p.title.slice(0, 60)}..." (${p.year})`);
+    });
     
     return {
       name: authorData.name,
@@ -137,22 +178,23 @@ export async function searchAuthorSemanticScholar(
 const OPENALEX_API = 'https://api.openalex.org';
 
 /**
- * Search for an author by name on OpenAlex (fallback)
+ * Search for an author by name on OpenAlex
+ * Uses institution IDs to get proper affiliations
  */
 export async function searchAuthorOpenAlex(
   authorName: string,
   affiliation?: string
 ): Promise<AuthorProfile | null> {
   try {
-    // Search for author
-    const searchUrl = `${OPENALEX_API}/authors?search=${encodeURIComponent(authorName)}&per_page=5`;
+    // Search for author with more fields
+    const searchUrl = `${OPENALEX_API}/authors?search=${encodeURIComponent(authorName)}&per_page=10`;
     
     console.log(`🔍 OpenAlex: Searching for "${authorName}"...`);
     
     const searchRes = await fetch(searchUrl, {
       headers: { 
         'Accept': 'application/json',
-        'User-Agent': 'PhDApply/1.0 (mailto:contact@example.com)' // OpenAlex asks for this
+        'User-Agent': 'PhDApply/1.0 (mailto:contact@example.com)'
       }
     });
     
@@ -165,7 +207,9 @@ export async function searchAuthorOpenAlex(
       results: { 
         id: string; 
         display_name: string;
-        last_known_institution?: { display_name: string };
+        last_known_institutions?: Array<{ id: string; display_name: string; country_code?: string }>;
+        last_known_institution?: { id: string; display_name: string; country_code?: string };
+        affiliations?: Array<{ institution: { id: string; display_name: string } }>;
         works_count: number;
         cited_by_count: number;
         summary_stats?: { h_index: number };
@@ -177,34 +221,69 @@ export async function searchAuthorOpenAlex(
       return null;
     }
     
-    // Find best match (optionally by affiliation)
+    // Find best match by affiliation
     let author = searchData.results[0];
-    if (affiliation) {
-      const affiliationLower = affiliation.toLowerCase();
-      const matchingAuthor = searchData.results.find(a => 
-        a.last_known_institution?.display_name?.toLowerCase().includes(affiliationLower)
-      );
-      if (matchingAuthor) author = matchingAuthor;
+    if (!author) {
+      console.log(`⚠️ No author data available`);
+      return null;
     }
     
-    console.log(`✅ Found author: ${author.display_name} (${author.last_known_institution?.display_name || 'Unknown affiliation'})`);
-    
-    // Get author's works
-    const worksUrl = `${OPENALEX_API}/works?filter=author.id:${author.id}&sort=publication_date:desc&per_page=10`;
-    
-    const worksRes = await fetch(worksUrl, {
-      headers: { 
-        'Accept': 'application/json',
-        'User-Agent': 'PhDApply/1.0'
+    if (affiliation) {
+      const affiliationLower = affiliation.toLowerCase();
+      const matchingAuthor = searchData.results.find(a => {
+        // Check last_known_institution
+        if (a.last_known_institution?.display_name?.toLowerCase().includes(affiliationLower)) {
+          return true;
+        }
+        // Check last_known_institutions array
+        if (a.last_known_institutions?.some(inst => 
+          inst.display_name?.toLowerCase().includes(affiliationLower)
+        )) {
+          return true;
+        }
+        // Check affiliations array
+        if (a.affiliations?.some(aff => 
+          aff.institution?.display_name?.toLowerCase().includes(affiliationLower)
+        )) {
+          return true;
+        }
+        return false;
+      });
+      if (matchingAuthor) {
+        author = matchingAuthor;
+        console.log(`✅ Matched by affiliation!`);
       }
-    });
+    }
     
-    if (!worksRes.ok) {
-      console.log(`⚠️ Failed to get works: ${worksRes.status}`);
+    // Get the best available affiliation
+    const authorAffiliation = 
+      author.last_known_institution?.display_name ||
+      author.last_known_institutions?.[0]?.display_name ||
+      author.affiliations?.[0]?.institution?.display_name ||
+      'Unknown';
+    
+    console.log(`✅ Found author: ${author.display_name} (${authorAffiliation})`);
+    
+    // Get author's works - fetch BOTH recent AND most cited
+    console.log(`📚 Fetching papers: 5 most recent + 5 most cited...`);
+    
+    // 1. Get 10 most recent papers
+    const recentUrl = `${OPENALEX_API}/works?filter=author.id:${author.id}&sort=publication_date:desc&per_page=10`;
+    
+    // 2. Get 10 most cited papers
+    const citedUrl = `${OPENALEX_API}/works?filter=author.id:${author.id}&sort=cited_by_count:desc&per_page=10`;
+    
+    const [recentRes, citedRes] = await Promise.all([
+      fetch(recentUrl, { headers: { 'Accept': 'application/json', 'User-Agent': 'PhDApply/1.0' } }),
+      fetch(citedUrl, { headers: { 'Accept': 'application/json', 'User-Agent': 'PhDApply/1.0' } })
+    ]);
+    
+    if (!recentRes.ok && !citedRes.ok) {
+      console.log(`⚠️ Failed to get works`);
       return {
         name: author.display_name,
         authorId: author.id,
-        affiliation: author.last_known_institution?.display_name,
+        affiliation: authorAffiliation,
         paperCount: author.works_count,
         citationCount: author.cited_by_count,
         hIndex: author.summary_stats?.h_index,
@@ -212,42 +291,126 @@ export async function searchAuthorOpenAlex(
       };
     }
     
-    const worksData = await worksRes.json() as {
-      results: {
-        title: string;
-        publication_year: number;
-        abstract_inverted_index?: Record<string, number[]>;
-        primary_location?: { source?: { display_name: string } };
-        cited_by_count: number;
-        doi?: string;
-        open_access?: { oa_url?: string };
-        authorships?: { author: { display_name: string } }[];
-      }[];
+    // Define work structure type
+    interface WorkResult {
+      title: string;
+      publication_year: number;
+      abstract_inverted_index?: Record<string, number[]>;
+      primary_location?: { 
+        source?: { display_name: string };
+        pdf_url?: string;
+      };
+      best_oa_location?: {
+        pdf_url?: string;
+        landing_page_url?: string;
+      };
+      locations?: Array<{
+        pdf_url?: string;
+        landing_page_url?: string;
+      }>;
+      cited_by_count: number;
+      doi?: string;
+      open_access?: { 
+        is_oa: boolean;
+        oa_url?: string;
+      };
+      authorships?: { author: { display_name: string } }[];
+    }
+    
+    // Parse both responses
+    const recentData = recentRes.ok ? await recentRes.json() as { results: WorkResult[] } : { results: [] };
+    const citedData = citedRes.ok ? await citedRes.json() as { results: WorkResult[] } : { results: [] };
+    
+    // Helper to validate PDF URL (must be actual PDF, not landing page)
+    const isValidPdfUrl = (url?: string): boolean => {
+      if (!url) return false;
+      if (!url.startsWith('http')) return false;
+      const urlLower = url.toLowerCase();
+      if (urlLower.endsWith('.pdf')) return true;
+      if (urlLower.includes('arxiv.org/pdf/')) return true;
+      if (urlLower.includes('aclanthology.org') && urlLower.endsWith('.pdf')) return true;
+      if (urlLower.includes('/pdf/') || urlLower.includes('/pdfs/')) return true;
+      if (urlLower.includes('doi.org/10.')) return false;
+      return false;
     };
     
-    // Transform papers
-    const papers: AcademicPaper[] = worksData.results.map(w => ({
-      title: w.title,
-      year: w.publication_year,
-      abstract: invertedIndexToText(w.abstract_inverted_index),
-      authors: w.authorships?.map(a => a.author.display_name) || [],
-      venue: w.primary_location?.source?.display_name || '',
-      citationCount: w.cited_by_count,
-      url: w.doi ? `https://doi.org/${w.doi}` : '',
-      pdfUrl: w.open_access?.oa_url,
-      doi: w.doi,
-    }));
+    // Transform work to paper
+    const transformWork = (w: WorkResult): AcademicPaper => {
+      let pdfUrl: string | undefined;
+      
+      if (isValidPdfUrl(w.best_oa_location?.pdf_url)) {
+        pdfUrl = w.best_oa_location!.pdf_url;
+      } else if (isValidPdfUrl(w.primary_location?.pdf_url)) {
+        pdfUrl = w.primary_location!.pdf_url;
+      } else if (w.locations) {
+        for (const loc of w.locations) {
+          if (isValidPdfUrl(loc.pdf_url)) {
+            pdfUrl = loc.pdf_url;
+            break;
+          }
+        }
+      }
+      
+      return {
+        title: w.title,
+        year: w.publication_year,
+        abstract: invertedIndexToText(w.abstract_inverted_index),
+        authors: w.authorships?.map(a => a.author.display_name) || [],
+        venue: w.primary_location?.source?.display_name || '',
+        citationCount: w.cited_by_count,
+        url: w.doi ? `https://doi.org/${w.doi}` : '',
+        pdfUrl,
+        doi: w.doi,
+      };
+    };
     
-    console.log(`✅ Found ${papers.length} papers, ${papers.filter(p => p.pdfUrl).length} with open access`);
+    // Get unique papers by title (combine recent and cited)
+    const seenTitles = new Set<string>();
+    const allPapers: AcademicPaper[] = [];
+    
+    // Add 5 most recent with PDFs first
+    const recentWithPdf = recentData.results
+      .map(transformWork)
+      .filter(p => p.pdfUrl)
+      .slice(0, 5);
+    
+    console.log(`   📅 ${recentWithPdf.length} recent papers with open access PDFs`);
+    for (const p of recentWithPdf) {
+      if (!seenTitles.has(p.title.toLowerCase())) {
+        seenTitles.add(p.title.toLowerCase());
+        allPapers.push(p);
+      }
+    }
+    
+    // Add 5 most cited with PDFs
+    const citedWithPdf = citedData.results
+      .map(transformWork)
+      .filter(p => p.pdfUrl)
+      .slice(0, 5);
+    
+    console.log(`   📊 ${citedWithPdf.length} cited papers with open access PDFs`);
+    for (const p of citedWithPdf) {
+      if (!seenTitles.has(p.title.toLowerCase())) {
+        seenTitles.add(p.title.toLowerCase());
+        allPapers.push(p);
+      }
+    }
+    
+    console.log(`✅ Found ${allPapers.length} unique papers with open access PDFs (5 recent + 5 cited, deduplicated)`);
+    
+    // Log the papers for debugging
+    allPapers.forEach((p, i) => {
+      console.log(`   ${i + 1}. "${p.title.slice(0, 50)}..." (${p.year}, ${p.citationCount} cites)`);
+    });
     
     return {
       name: author.display_name,
       authorId: author.id,
-      affiliation: author.last_known_institution?.display_name,
+      affiliation: authorAffiliation,
       paperCount: author.works_count,
       citationCount: author.cited_by_count,
       hIndex: author.summary_stats?.h_index,
-      papers,
+      papers: allPapers,
     };
   } catch (error) {
     console.error('OpenAlex API error:', error);
@@ -275,19 +438,30 @@ function invertedIndexToText(invertedIndex?: Record<string, number[]>): string {
 // ============ Combined Search ============
 
 /**
- * Search for author using Semantic Scholar first, then OpenAlex as fallback
+ * Search for author using OpenAlex FIRST (provides affiliations), then Semantic Scholar as fallback
  */
 export async function searchAuthor(
   authorName: string, 
   affiliation?: string
 ): Promise<AuthorProfile | null> {
-  // Try Semantic Scholar first (better paper data)
-  let result = await searchAuthorSemanticScholar(authorName, affiliation);
+  // Try OpenAlex first (provides affiliations in API responses)
+  console.log('\n📚 === ACADEMIC API SEARCH ===');
+  let result = await searchAuthorOpenAlex(authorName, affiliation);
   
-  // Fallback to OpenAlex if no results
-  if (!result || result.papers.length === 0) {
-    console.log('📚 Trying OpenAlex as fallback...');
-    result = await searchAuthorOpenAlex(authorName, affiliation);
+  // Verify we got good results (more than just a couple papers)
+  if (result && result.papers.length >= 3) {
+    console.log(`✅ OpenAlex found good results: ${result.papers.length} papers`);
+    return result;
+  }
+  
+  // Fallback to Semantic Scholar if OpenAlex didn't give good results
+  console.log('📚 Trying Semantic Scholar as fallback...');
+  const ssResult = await searchAuthorSemanticScholar(authorName, affiliation);
+  
+  // Use whichever has more papers
+  if (ssResult && (!result || ssResult.papers.length > result.papers.length)) {
+    console.log(`✅ Semantic Scholar has better results: ${ssResult.papers.length} papers`);
+    return ssResult;
   }
   
   return result;

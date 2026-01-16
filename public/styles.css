@@ -490,6 +490,149 @@ select {
   color: var(--text-muted);
 }
 
+/* ============ Markdown Content Styles ============ */
+.markdown-content {
+  font-size: 0.95rem;
+  line-height: 1.8;
+  color: var(--text);
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown-content h1 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.markdown-content h2 {
+  font-size: 1.25rem;
+  color: var(--primary-light);
+}
+
+.markdown-content h3 {
+  font-size: 1.1rem;
+}
+
+.markdown-content h4 {
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.markdown-content p {
+  margin-bottom: 1rem;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.markdown-content li {
+  margin-bottom: 0.5rem;
+}
+
+.markdown-content li::marker {
+  color: var(--primary);
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.markdown-content em {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.markdown-content blockquote {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid var(--primary);
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-style: italic;
+}
+
+.markdown-content blockquote p {
+  margin-bottom: 0;
+}
+
+.markdown-content code {
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85em;
+  padding: 0.2rem 0.4rem;
+  background: var(--surface-light);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.markdown-content pre {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: var(--surface-light);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.markdown-content hr {
+  margin: 1.5rem 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.markdown-content a {
+  color: var(--primary-light);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: var(--transition);
+}
+
+.markdown-content a:hover {
+  border-bottom-color: var(--primary-light);
+}
+
+.markdown-content table {
+  width: 100%;
+  margin: 1rem 0;
+  border-collapse: collapse;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 0.75rem;
+  text-align: left;
+  border: 1px solid var(--border);
+}
+
+.markdown-content th {
+  background: var(--surface-light);
+  font-weight: 600;
+}
+
+.markdown-content tr:hover {
+  background: rgba(99, 102, 241, 0.05);
+}
+
 /* Subject lines */
 .subject-lines {
   display: flex;

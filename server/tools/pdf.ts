@@ -1,6 +1,17 @@
 import { readFile } from 'fs/promises';
 import PDFParser from 'pdf2json';
 
+// Suppress pdf2json verbose warnings globally
+const originalWarn = console.warn;
+const suppressedPatterns = ['Setting up fake worker', 'TT: undefined', 'Unsupported:', 'NOT valid'];
+console.warn = (...args: any[]) => {
+  const message = args[0]?.toString() || '';
+  if (suppressedPatterns.some(p => message.includes(p))) {
+    return; // Suppress this warning
+  }
+  originalWarn.apply(console, args);
+};
+
 /**
  * Parse PDF file and extract text content
  */
@@ -27,7 +38,20 @@ export async function parsePDFBuffer(buffer: Buffer): Promise<string> {
 }
 
 /**
+ * Safely decode URI component, returning original if malformed
+ */
+function safeDecodeURI(encoded: string): string {
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    // Return original if decoding fails
+    return encoded;
+  }
+}
+
+/**
  * Extract text from PDF using pdf2json
+ * Warnings are suppressed globally at module level
  */
 async function extractTextFromPDF(data: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -45,7 +69,7 @@ async function extractTextFromPDF(data: Buffer): Promise<string> {
             page.Texts
               .map((textItem: any) => 
                 textItem.R
-                  .map((r: any) => decodeURIComponent(r.T))
+                  .map((r: any) => safeDecodeURI(r.T))
                   .join('')
               )
               .join(' ')

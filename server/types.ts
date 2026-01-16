@@ -89,6 +89,43 @@ export interface FitAnalysis {
   suggestedAngle: string;
 }
 
+// ============ Paper Selection Types ============
+
+export interface PaperCandidate {
+  title: string;
+  year: number;
+  abstract?: string;
+  url: string;
+  pdfUrl?: string;
+  citationCount: number;
+  venue?: string;
+  relevanceScore?: number;
+}
+
+export interface PaperSelectionDecision {
+  papersToDownload: Array<{
+    title: string;
+    pdfUrl: string;
+    reason: string;
+    priority: 'high' | 'medium' | 'low';
+  }>;
+  papersToSkip: Array<{
+    title: string;
+    reason: string;
+  }>;
+  shouldSearchMore: boolean;
+  searchSuggestions?: string[];
+  reasoning: string;
+}
+
+export interface PaperContext {
+  availablePapers: PaperCandidate[];
+  downloadedContent: Map<string, string>;
+  selectionHistory: PaperSelectionDecision[];
+  totalDownloaded: number;
+  maxPapers: number;
+}
+
 // ============ Email Output ============
 
 export interface EmailOutput {

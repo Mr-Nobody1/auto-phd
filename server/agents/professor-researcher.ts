@@ -8,6 +8,7 @@ import type { ProfessorProfile, Paper } from '../types';
  * Professor Researcher Agent
  * Uses Semantic Scholar / OpenAlex APIs for papers
  * Uses browser only for faculty page scraping
+ * Includes AI verification to confirm correct professor
  */
 export async function researchProfessor(
   professorName: string,
@@ -15,6 +16,9 @@ export async function researchProfessor(
   onStatus: (status: string) => void
 ): Promise<ProfessorProfile> {
   const sources: string[] = [];
+  
+  console.log(`\n📚 === PROFESSOR RESEARCH ===`);
+  console.log(`   Target: ${professorName} at ${university}`);
 
   // Step 1: Search academic APIs for papers (no scraping!)
   onStatus('Searching academic databases...');
@@ -23,10 +27,16 @@ export async function researchProfessor(
   let papers: AcademicPaper[] = [];
   if (authorProfile) {
     papers = authorProfile.papers;
-    console.log(`✅ Found ${papers.length} papers via API`);
+    console.log(`\n✅ API Author Profile Found:`);
+    console.log(`   Name: ${authorProfile.name}`);
+    console.log(`   Affiliation: ${authorProfile.affiliation || 'Unknown'}`);
+    console.log(`   Papers: ${authorProfile.paperCount}`);
+    console.log(`   Citations: ${authorProfile.citationCount}`);
     if (authorProfile.affiliation) {
       sources.push(`Academic Profile: ${authorProfile.affiliation}`);
     }
+  } else {
+    console.log(`⚠️ No author profile found in academic databases`);
   }
 
   // Step 2: Find and scrape faculty page for bio, email, etc.
@@ -46,7 +56,59 @@ export async function researchProfessor(
     sources.push(facultyUrl);
     onStatus('Extracting faculty page information...');
     facultyInfo = await scrapeFacultyPage(facultyUrl);
-    console.log(`✅ Scraped faculty page, email: ${facultyInfo.email || 'not found'}`);
+    console.log(`✅ Scraped faculty page`);
+  } else {
+    console.log(`⚠️ No faculty page found`);
+  }
+  
+  // Step 2.5: AI Verification - Confirm we have the right professor
+  if (authorProfile && facultyInfo.bio) {
+    onStatus('Verifying professor identity...');
+    
+    const verificationPrompt = `I need to verify if these two sources describe the same professor.
+
+TARGET PROFESSOR: ${professorName} at ${university}
+
+SOURCE 1 - Academic Database (Semantic Scholar/OpenAlex):
+- Name: ${authorProfile.name}
+- Affiliation: ${authorProfile.affiliation || 'Unknown'}
+- Recent paper titles: ${papers.slice(0, 3).map(p => p.title).join('; ')}
+
+SOURCE 2 - Faculty Page Scrape:
+- Bio excerpt: ${facultyInfo.bio.slice(0, 500)}
+- Email found: ${facultyInfo.email || 'None'}
+- Research interests: ${facultyInfo.researchInterests.slice(0, 3).join(', ') || 'None extracted'}
+
+Question: Do these sources likely describe the SAME person? Consider:
+1. Does the name match?
+2. Does the institution/affiliation match?
+3. Do the research topics/papers align?
+
+Respond with JSON:
+{
+  "isSamePerson": true/false,
+  "confidence": "high" | "medium" | "low",
+  "reasoning": "Brief explanation"
+}`;
+
+    try {
+      const verification = await callGeminiJSON<{
+        isSamePerson: boolean;
+        confidence: string;
+        reasoning: string;
+      }>(verificationPrompt, { useProModel: false });
+      
+      console.log(`\n🔍 AI Verification Result:`);
+      console.log(`   Same person: ${verification.isSamePerson}`);
+      console.log(`   Confidence: ${verification.confidence}`);
+      console.log(`   Reasoning: ${verification.reasoning}`);
+      
+      if (!verification.isSamePerson) {
+        console.log(`⚠️ WARNING: AI thinks this might not be the correct professor!`);
+      }
+    } catch (error) {
+      console.log(`⚠️ Verification failed: ${error}`);
+    }
   }
 
   // Step 3: Download open access PDFs for context

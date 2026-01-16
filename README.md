@@ -13,14 +13,14 @@ A multi-agent AI system that helps you prepare comprehensive PhD application mat
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) v1.0+
+- [Node.js](https://nodejs.org) v18+ (Bun has compatibility issues with Playwright)
 - [Gemini API Key](https://makersuite.google.com/app/apikey)
 
 ## Setup
 
 1. **Clone and install dependencies:**
    ```bash
-   bun install
+   npm install
    ```
 
 2. **Set up environment variables:**
@@ -31,7 +31,7 @@ A multi-agent AI system that helps you prepare comprehensive PhD application mat
 
 3. **Install Playwright browsers (first time only):**
    ```bash
-   bunx playwright install chromium
+   npx playwright install chromium
    ```
 
 4. **Start the server:**
@@ -85,7 +85,7 @@ phd-apply/
 ## Agents Pipeline
 
 1. **CV Parser** - Extracts structured info from your CV
-2. **Professor Researcher** - Scrapes faculty pages and Google Scholar
+2. **Professor Researcher** - Scrapes faculty pages + uses Semantic Scholar/OpenAlex APIs
 3. **Fit Analyzer** - Analyzes alignment and selects best paper to reference
 4. **Email Writer** - Crafts personalized cold email
 5. **CV Recommender** - Suggests specific CV changes
@@ -94,11 +94,12 @@ phd-apply/
 
 ## Tech Stack
 
-- **Runtime**: Bun
+- **Runtime**: Node.js + tsx
 - **Backend**: Hono (+ SSE for real-time updates)
 - **AI**: Gemini 1.5 (Flash + Pro)
-- **Scraping**: Playwright
-- **PDF**: pdf-parse
+- **Scraping**: Playwright (faculty pages only)
+- **Academic Data**: Semantic Scholar & OpenAlex APIs
+- **PDF**: pdf2json
 - **Frontend**: Vanilla JS + CSS
 
 ## License

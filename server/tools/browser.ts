@@ -92,48 +92,93 @@ export async function findFacultyPage(
   professorName: string,
   university: string
 ): Promise<string | null> {
+  console.log(`\n🌐 === FACULTY PAGE SEARCH ===`);
+  console.log(`   Professor: ${professorName}`);
+  console.log(`   University: ${university}`);
+  
   const browser = await getBrowser();
   const context = await createContext(browser);
   const page = await context.newPage();
 
   try {
-    const query = `"${professorName}" "${university}" professor site:.edu OR site:.ac.uk`;
+    // Use a broader search query with more TLDs
+    const query = `"${professorName}" "${university}" professor`;
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    
+    console.log(`   Search query: ${query}`);
+    console.log(`   Navigating to Google...`);
     
     await randomDelay(500, 1500);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await randomDelay(1000, 2000);
+    await randomDelay(2000, 3000); // Wait longer for results
+
+    // Check page title and content for bot detection/CAPTCHA
+    let title = await page.title();
+    console.log(`   Page title: ${title}`);
+    
+    // Multiple detection methods for bot/CAPTCHA
+    const pageContent = await page.content();
+    const isCaptcha = title.toLowerCase().includes('captcha') || 
+                      title.toLowerCase().includes('unusual traffic') ||
+                      pageContent.includes('detected unusual traffic') ||
+                      pageContent.includes('not a robot') ||
+                      pageContent.includes('captcha');
+    
+    if (isCaptcha) {
+      console.log(`\n⚠️  BOT/CAPTCHA DETECTED!`);
+      console.log(`   Please solve the CAPTCHA in the browser window...`);
+      console.log(`   Waiting 30 seconds for you to solve it...`);
+      
+      // Wait 30 seconds for user to solve CAPTCHA
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      
+      // Check if page was updated after CAPTCHA solve
+      title = await page.title();
+      console.log(`   Page title after wait: ${title}`);
+    }
 
     const links = await page.evaluate(() => {
       const results: string[] = [];
       const anchors = document.querySelectorAll('a[href^="http"]');
       anchors.forEach((a) => {
         const href = a.getAttribute('href');
-        if (href && !href.includes('google.com')) {
+        if (href && !href.includes('google.com') && !href.includes('youtube.com')) {
           results.push(href);
         }
       });
       return results;
     });
+    
+    console.log(`   Found ${links.length} links on page`);
+    
+    // If no links found, might still be blocked
+    if (links.length === 0) {
+      console.log(`⚠️ No links found - page might be blocked or CAPTCHA not solved`);
+      return null;
+    }
 
-    // Filter for likely faculty pages
+    // Filter for likely faculty pages - check multiple patterns
+    const facultyPatterns = ['faculty', 'people', 'staff', 'professor', '~', 'team', 'researchers', 'members', 'profile'];
+    
     for (const url of links) {
-      if (
-        url.includes('faculty') ||
-        url.includes('people') ||
-        url.includes('staff') ||
-        url.includes('professor') ||
-        url.includes('~') || // Personal pages often use ~username
-        url.includes('team')
-      ) {
+      if (facultyPatterns.some(p => url.toLowerCase().includes(p))) {
         console.log(`✅ Found faculty page: ${url}`);
         return url;
       }
     }
 
+    // If no faculty-specific URL found, take first result that looks academic
+    for (const url of links) {
+      if (url.includes('.edu') || url.includes('.ac.') || url.includes('uni-') || url.includes('university')) {
+        console.log(`⚠️ Using academic URL (not faculty-specific): ${url}`);
+        return url;
+      }
+    }
+
+    console.log(`⚠️ No faculty page found, returning first result`);
     return links[0] || null;
   } catch (error) {
-    console.error('Faculty page search failed:', error);
+    console.error('❌ Faculty page search failed:', error);
     return null;
   } finally {
     await context.close();
@@ -144,14 +189,19 @@ export async function findFacultyPage(
  * Scrape a faculty page for professor information
  */
 export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
+  console.log(`\n📄 === SCRAPING FACULTY PAGE ===`);
+  console.log(`   URL: ${url}`);
+  
   const browser = await getBrowser();
   const context = await createContext(browser);
   const page = await context.newPage();
 
   try {
-    console.log(`📄 Scraping faculty page: ${url}`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await randomDelay(1000, 2000);
+    await randomDelay(2000, 3000); // Wait for content to load
+    
+    const title = await page.title();
+    console.log(`   Page title: ${title}`);
 
     const info = await page.evaluate(() => {
       // Get page text
@@ -173,9 +223,9 @@ export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
       }
       
       // Look for research interests section
-      const interestKeywords = ['research interest', 'research area', 'focus', 'expertise'];
+      const interestKeywords = ['research interest', 'research area', 'focus', 'expertise', 'research topics', 'working on'];
       let researchSection = '';
-      const sections = document.querySelectorAll('p, li, div');
+      const sections = document.querySelectorAll('p, li, div, span');
       sections.forEach((el) => {
         const text = el.textContent?.toLowerCase() || '';
         if (interestKeywords.some(k => text.includes(k))) {
@@ -197,7 +247,7 @@ export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
       
       // Check for open positions
       let openPositions: string | null = null;
-      const positionKeywords = ['phd position', 'phd student', 'opening', 'hiring', 'seeking', 'looking for'];
+      const positionKeywords = ['phd position', 'phd student', 'opening', 'hiring', 'seeking', 'looking for', 'join us', 'open position'];
       sections.forEach((el) => {
         const text = el.textContent?.toLowerCase() || '';
         if (positionKeywords.some(k => text.includes(k))) {
@@ -205,13 +255,17 @@ export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
         }
       });
       
+      // Get page title for context
+      const pageTitle = document.title;
+      
       return {
-        bio: bodyText.slice(0, 3000), // First 3000 chars as bio
+        bio: bodyText.slice(0, 5000), // First 5000 chars as bio (increased)
         researchSection,
         email,
         labUrl,
         labName,
         openPositions,
+        pageTitle,
       };
     });
 
@@ -227,6 +281,17 @@ export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
         }
       }
     }
+    
+    // Log extracted info
+    console.log(`\n📊 SCRAPED FACULTY PAGE INFO:`);
+    console.log(`   Page Title: ${info.pageTitle}`);
+    console.log(`   Email: ${info.email || 'Not found'}`);
+    console.log(`   Lab Name: ${info.labName || 'Not found'}`);
+    console.log(`   Lab URL: ${info.labUrl || 'Not found'}`);
+    console.log(`   Open Positions: ${info.openPositions ? 'Yes' : 'Not mentioned'}`);
+    console.log(`   Research Interests: ${researchInterests.length > 0 ? researchInterests.slice(0, 3).join('; ') + '...' : 'Not extracted'}`);
+    console.log(`   Bio length: ${info.bio.length} chars`);
+    console.log(`   Bio preview: ${info.bio.slice(0, 200).replace(/\n/g, ' ')}...`);
 
     return {
       bio: info.bio,
@@ -238,7 +303,7 @@ export async function scrapeFacultyPage(url: string): Promise<FacultyPageInfo> {
       pageUrl: url,
     };
   } catch (error) {
-    console.error('Faculty page scrape failed:', error);
+    console.error('❌ Faculty page scrape failed:', error);
     return {
       bio: '',
       researchInterests: [],

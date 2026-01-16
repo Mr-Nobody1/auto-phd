@@ -3,29 +3,41 @@ import type {
   SharedContext,
   AgentStatus,
   GenerationResult,
+  PaperContext,
+  PaperCandidate,
 } from './types';
 import { parseCV } from './agents/cv-parser';
 import { researchProfessor } from './agents/professor-researcher';
+import { selectPapers, shouldContinueGathering } from './agents/paper-selector';
 import { analyzeFit } from './agents/fit-analyzer';
 import { writeEmail } from './agents/email-writer';
 import { recommendCVChanges } from './agents/cv-recommender';
 import { writeMotivationLetter } from './agents/motivation-writer';
 import { writeResearchProposal } from './agents/proposal-writer';
+import { downloadOpenAccessPdf } from './tools/academic-api';
+import { parsePDFBuffer } from './tools/pdf';
 
 export type StatusCallback = (status: AgentStatus) => void;
+
+// Configuration for the paper selection loop
+const PAPER_CONFIG = {
+  maxPapers: 5,       // Maximum papers to download
+  maxIterations: 5,   // Maximum selection iterations
+};
 
 const AGENTS = [
   { step: 1, name: 'CV Parser', key: 'cvParser' },
   { step: 2, name: 'Professor Researcher', key: 'professorResearcher' },
-  { step: 3, name: 'Fit Analyzer', key: 'fitAnalyzer' },
-  { step: 4, name: 'Email Writer', key: 'emailWriter' },
-  { step: 5, name: 'CV Recommender', key: 'cvRecommender' },
-  { step: 6, name: 'Motivation Letter Writer', key: 'motivationWriter' },
-  { step: 7, name: 'Research Proposal Writer', key: 'proposalWriter' },
+  { step: 3, name: 'Paper Selector', key: 'paperSelector' },  // New agent
+  { step: 4, name: 'Fit Analyzer', key: 'fitAnalyzer' },
+  { step: 5, name: 'Email Writer', key: 'emailWriter' },
+  { step: 6, name: 'CV Recommender', key: 'cvRecommender' },
+  { step: 7, name: 'Motivation Letter Writer', key: 'motivationWriter' },
+  { step: 8, name: 'Research Proposal Writer', key: 'proposalWriter' },
 ];
 
 /**
- * Orchestrator - coordinates all agents and manages pipeline state
+ * Enhanced Orchestrator with AI-driven paper selection loop
  */
 export async function runPipeline(
   input: UserInput,
@@ -74,7 +86,7 @@ export async function runPipeline(
       output: context.userProfile,
     });
 
-    // ========== Step 2: Research Professor ==========
+    // ========== Step 2: Research Professor (Basic Info + Paper List) ==========
     updateStatus(2, { status: 'running', currentAction: 'Starting professor research...' });
 
     context.professorProfile = await researchProfessor(
@@ -92,33 +104,134 @@ export async function runPipeline(
       output: context.professorProfile,
     });
 
-    // ========== Step 3: Analyze Fit ==========
-    updateStatus(3, { status: 'running', currentAction: 'Analyzing research fit...' });
+    // ========== Step 3: AI-Driven Paper Selection Loop ==========
+    updateStatus(3, { status: 'running', currentAction: 'Initializing paper selection...' });
+
+    // Initialize paper context
+    const paperContext: PaperContext = {
+      availablePapers: context.professorProfile.recentPapers.map((p) => ({
+        title: p.title,
+        year: p.year,
+        abstract: p.abstract,
+        url: p.url,
+        pdfUrl: p.pdfUrl,
+        citationCount: 0, // Default, could be enhanced
+        venue: p.venue,
+      })),
+      downloadedContent: new Map(),
+      selectionHistory: [],
+      totalDownloaded: 0,
+      maxPapers: PAPER_CONFIG.maxPapers,
+    };
+
+    // Check if we already have downloaded content from professor-researcher
+    for (const paper of context.professorProfile.recentPapers) {
+      if (paper.fullText) {
+        paperContext.downloadedContent.set(paper.title, paper.fullText);
+        paperContext.totalDownloaded++;
+      }
+    }
+
+    console.log(`📊 Starting paper selection with ${paperContext.totalDownloaded} already downloaded`);
+
+    // Paper selection loop
+    let iteration = 0;
+    while (iteration < PAPER_CONFIG.maxIterations) {
+      iteration++;
+      updateStatus(3, { 
+        currentAction: `Paper selection iteration ${iteration}/${PAPER_CONFIG.maxIterations}...` 
+      });
+
+      // Ask AI which papers to download
+      const decision = await selectPapers(
+        context.userProfile!,
+        input.researchInterests,
+        paperContext,
+        (action) => updateStatus(3, { currentAction: action })
+      );
+
+      // Store decision history
+      paperContext.selectionHistory.push(decision);
+
+      // Download selected papers
+      for (const paperToDownload of decision.papersToDownload) {
+        if (paperContext.totalDownloaded >= PAPER_CONFIG.maxPapers) {
+          console.log('📚 Reached max paper limit');
+          break;
+        }
+
+        try {
+          updateStatus(3, { 
+            currentAction: `Downloading: ${paperToDownload.title.slice(0, 35)}...` 
+          });
+
+          const pdfBuffer = await downloadOpenAccessPdf(paperToDownload.pdfUrl);
+          
+          if (pdfBuffer) {
+            const buffer = Buffer.from(pdfBuffer);
+            const text = await parsePDFBuffer(buffer);
+            
+            if (text && text.length > 100) {
+              paperContext.downloadedContent.set(paperToDownload.title, text.slice(0, 5000));
+              paperContext.totalDownloaded++;
+              console.log(`✅ Downloaded paper #${paperContext.totalDownloaded}: ${paperToDownload.title.slice(0, 40)}`);
+
+              // Update professor profile with downloaded content
+              const paperIndex = context.professorProfile!.recentPapers.findIndex(
+                p => p.title.toLowerCase() === paperToDownload.title.toLowerCase()
+              );
+              if (paperIndex >= 0 && context.professorProfile!.recentPapers[paperIndex]) {
+                context.professorProfile!.recentPapers[paperIndex].fullText = text.slice(0, 5000);
+              }
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ Failed to download: ${paperToDownload.title.slice(0, 30)}`);
+        }
+      }
+
+      // Check if we should continue
+      if (!decision.shouldSearchMore) {
+        console.log('📚 AI decided no more papers needed');
+        break;
+      }
+
+      // Additional check with the evaluation function
+      const continueResult = await shouldContinueGathering(
+        context.userProfile!,
+        input.researchInterests,
+        paperContext,
+        iteration,
+        PAPER_CONFIG.maxIterations,
+        (action) => updateStatus(3, { currentAction: action })
+      );
+
+      if (!continueResult.shouldContinue) {
+        console.log(`📚 Stopping: ${continueResult.reason}`);
+        break;
+      }
+
+      console.log(`📚 Continue gathering: ${continueResult.reason}`);
+    }
+
+    updateStatus(3, {
+      status: 'complete',
+      currentAction: `Downloaded ${paperContext.totalDownloaded} papers`,
+      progress: 100,
+      output: {
+        totalDownloaded: paperContext.totalDownloaded,
+        iterations: iteration,
+        papers: Array.from(paperContext.downloadedContent.keys()),
+      },
+    });
+
+    // ========== Step 4: Analyze Fit ==========
+    updateStatus(4, { status: 'running', currentAction: 'Analyzing research fit...' });
 
     context.fitAnalysis = await analyzeFit(
       context.userProfile!,
       context.professorProfile!,
       input.researchInterests,
-      (action) => {
-        updateStatus(3, { currentAction: action });
-      }
-    );
-
-    updateStatus(3, {
-      status: 'complete',
-      currentAction: `Fit: ${context.fitAnalysis.overallFit}`,
-      progress: 100,
-      output: context.fitAnalysis,
-    });
-
-    // ========== Step 4: Write Email ==========
-    updateStatus(4, { status: 'running', currentAction: 'Crafting personalized email...' });
-
-    context.email = await writeEmail(
-      context.userProfile!,
-      context.professorProfile!,
-      context.fitAnalysis!,
-      input,
       (action) => {
         updateStatus(4, { currentAction: action });
       }
@@ -126,19 +239,19 @@ export async function runPipeline(
 
     updateStatus(4, {
       status: 'complete',
-      currentAction: `${context.email.wordCount} words`,
+      currentAction: `Fit: ${context.fitAnalysis.overallFit}`,
       progress: 100,
-      output: context.email,
+      output: context.fitAnalysis,
     });
 
-    // ========== Step 5: CV Recommendations ==========
-    updateStatus(5, { status: 'running', currentAction: 'Analyzing CV for recommendations...' });
+    // ========== Step 5: Write Email ==========
+    updateStatus(5, { status: 'running', currentAction: 'Crafting personalized email...' });
 
-    context.cvRecommendations = await recommendCVChanges(
-      cvText,
+    context.email = await writeEmail(
       context.userProfile!,
       context.professorProfile!,
       context.fitAnalysis!,
+      input,
       (action) => {
         updateStatus(5, { currentAction: action });
       }
@@ -146,13 +259,33 @@ export async function runPipeline(
 
     updateStatus(5, {
       status: 'complete',
+      currentAction: `${context.email.wordCount} words`,
+      progress: 100,
+      output: context.email,
+    });
+
+    // ========== Step 6: CV Recommendations ==========
+    updateStatus(6, { status: 'running', currentAction: 'Analyzing CV for recommendations...' });
+
+    context.cvRecommendations = await recommendCVChanges(
+      cvText,
+      context.userProfile!,
+      context.professorProfile!,
+      context.fitAnalysis!,
+      (action) => {
+        updateStatus(6, { currentAction: action });
+      }
+    );
+
+    updateStatus(6, {
+      status: 'complete',
       currentAction: `${context.cvRecommendations.updates.length} updates suggested`,
       progress: 100,
       output: context.cvRecommendations,
     });
 
-    // ========== Step 6: Motivation Letter ==========
-    updateStatus(6, { status: 'running', currentAction: 'Writing motivation letter...' });
+    // ========== Step 7: Motivation Letter ==========
+    updateStatus(7, { status: 'running', currentAction: 'Writing motivation letter...' });
 
     context.motivationLetter = await writeMotivationLetter(
       context.userProfile!,
@@ -161,19 +294,19 @@ export async function runPipeline(
       context.email!,
       input,
       (action) => {
-        updateStatus(6, { currentAction: action });
+        updateStatus(7, { currentAction: action });
       }
     );
 
-    updateStatus(6, {
+    updateStatus(7, {
       status: 'complete',
       currentAction: `${context.motivationLetter.wordCount} words`,
       progress: 100,
       output: context.motivationLetter,
     });
 
-    // ========== Step 7: Research Proposal ==========
-    updateStatus(7, { status: 'running', currentAction: 'Drafting research proposal...' });
+    // ========== Step 8: Research Proposal ==========
+    updateStatus(8, { status: 'running', currentAction: 'Drafting research proposal...' });
 
     context.researchProposal = await writeResearchProposal(
       context.userProfile!,
@@ -181,11 +314,11 @@ export async function runPipeline(
       context.fitAnalysis!,
       input,
       (action) => {
-        updateStatus(7, { currentAction: action });
+        updateStatus(8, { currentAction: action });
       }
     );
 
-    updateStatus(7, {
+    updateStatus(8, {
       status: 'complete',
       currentAction: `${context.researchProposal.wordCount} words`,
       progress: 100,
