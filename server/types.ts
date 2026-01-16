@@ -13,6 +13,8 @@ export interface UserInput {
   cvFile?: File;
   cvText?: string;
   researchStatement?: string;
+  additionalNotes?: string;
+  postingContent?: string;
 }
 
 // ============ CV Parser Output ============
@@ -124,6 +126,33 @@ export interface PaperContext {
   selectionHistory: PaperSelectionDecision[];
   totalDownloaded: number;
   maxPapers: number;
+}
+
+// ============ Additional Paper Search Types ============
+
+export interface AdditionalPaperSuggestion {
+  title: string;
+  keywords?: string[];
+  reason: string;
+}
+
+export interface AdditionalPaperResult {
+  suggestion: AdditionalPaperSuggestion;
+  success: boolean;
+  paper?: {
+    title: string;
+    year: number;
+    abstract?: string;
+    pdfUrl?: string;
+  };
+  error?: string;
+  contentExtracted?: boolean;
+}
+
+export interface AdditionalPapersDecision {
+  suggestedPapers: AdditionalPaperSuggestion[];
+  reasoning: string;
+  shouldSuggestMore: boolean;
 }
 
 // ============ Email Output ============

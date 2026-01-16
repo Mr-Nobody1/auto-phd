@@ -504,3 +504,146 @@ export async function downloadOpenAccessPdf(url: string): Promise<Uint8Array | n
     return null;
   }
 }
+
+// ============ Search Paper by Title ============
+
+/**
+ * Search for a specific paper by title using OpenAlex
+ * Returns the best matching paper with a valid PDF URL, or null if not found
+ */
+export async function searchPaperByTitle(
+  title: string, 
+  keywords?: string[]
+): Promise<AcademicPaper | null> {
+  try {
+    // Build search query from title and optional keywords
+    let query = title;
+    if (keywords && keywords.length > 0) {
+      query = `${title} ${keywords.join(' ')}`;
+    }
+    
+    console.log(`🔍 Searching for paper: "${title.slice(0, 50)}..."`);
+    
+    const searchUrl = `${OPENALEX_API}/works?search=${encodeURIComponent(query)}&per_page=5`;
+    
+    const response = await fetch(searchUrl, {
+      headers: { 
+        'Accept': 'application/json',
+        'User-Agent': 'PhDApply/1.0 (mailto:contact@example.com)'
+      }
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ OpenAlex search failed: ${response.status}`);
+      return null;
+    }
+    
+    interface WorkResult {
+      title: string;
+      publication_year: number;
+      abstract_inverted_index?: Record<string, number[]>;
+      primary_location?: { 
+        source?: { display_name: string };
+        pdf_url?: string;
+      };
+      best_oa_location?: {
+        pdf_url?: string;
+      };
+      locations?: Array<{
+        pdf_url?: string;
+      }>;
+      cited_by_count: number;
+      doi?: string;
+      authorships?: { author: { display_name: string } }[];
+    }
+    
+    const data = await response.json() as { results: WorkResult[] };
+    
+    if (!data.results || data.results.length === 0) {
+      console.log(`⚠️ No papers found for: "${title.slice(0, 40)}..."`);
+      return null;
+    }
+    
+    // Helper to validate PDF URL (must be actual PDF, not landing page)
+    const isValidPdfUrl = (url?: string): boolean => {
+      if (!url) return false;
+      if (!url.startsWith('http')) return false;
+      const urlLower = url.toLowerCase();
+      if (urlLower.endsWith('.pdf')) return true;
+      if (urlLower.includes('arxiv.org/pdf/')) return true;
+      if (urlLower.includes('aclanthology.org') && urlLower.endsWith('.pdf')) return true;
+      if (urlLower.includes('/pdf/') || urlLower.includes('/pdfs/')) return true;
+      if (urlLower.includes('doi.org/10.')) return false;
+      return false;
+    };
+    
+    // Find the best match - look for title similarity and valid PDF
+    const titleLower = title.toLowerCase();
+    
+    for (const work of data.results) {
+      // Check if title is similar (contains key words)
+      const workTitleLower = work.title?.toLowerCase() || '';
+      const titleWords = titleLower.split(/\s+/).filter(w => w.length > 3);
+      const matchingWords = titleWords.filter(w => workTitleLower.includes(w));
+      const similarity = matchingWords.length / Math.max(titleWords.length, 1);
+      
+      // Require at least 50% word overlap
+      if (similarity < 0.5) continue;
+      
+      // Find valid PDF URL
+      let pdfUrl: string | undefined;
+      
+      if (isValidPdfUrl(work.best_oa_location?.pdf_url)) {
+        pdfUrl = work.best_oa_location!.pdf_url;
+      } else if (isValidPdfUrl(work.primary_location?.pdf_url)) {
+        pdfUrl = work.primary_location!.pdf_url;
+      } else if (work.locations) {
+        for (const loc of work.locations) {
+          if (isValidPdfUrl(loc.pdf_url)) {
+            pdfUrl = loc.pdf_url;
+            break;
+          }
+        }
+      }
+      
+      if (!pdfUrl) {
+        console.log(`⚠️ Found paper but no valid PDF: "${work.title?.slice(0, 40)}..."`);
+        continue;
+      }
+      
+      // Convert inverted index abstract to text
+      let abstract = '';
+      if (work.abstract_inverted_index) {
+        const words: [string, number][] = [];
+        for (const [word, positions] of Object.entries(work.abstract_inverted_index)) {
+          for (const pos of positions) {
+            words.push([word, pos]);
+          }
+        }
+        words.sort((a, b) => a[1] - b[1]);
+        abstract = words.map(w => w[0]).join(' ');
+      }
+      
+      const paper: AcademicPaper = {
+        title: work.title,
+        year: work.publication_year,
+        abstract,
+        authors: work.authorships?.map(a => a.author.display_name) || [],
+        venue: work.primary_location?.source?.display_name || '',
+        citationCount: work.cited_by_count,
+        url: work.doi ? `https://doi.org/${work.doi}` : '',
+        pdfUrl,
+        doi: work.doi,
+      };
+      
+      console.log(`✅ Found paper with PDF: "${paper.title.slice(0, 50)}..." (${paper.year})`);
+      return paper;
+    }
+    
+    console.log(`⚠️ No papers with valid PDF found for: "${title.slice(0, 40)}..."`);
+    return null;
+  } catch (error) {
+    console.log(`⚠️ Paper search error: ${error}`);
+    return null;
+  }
+}

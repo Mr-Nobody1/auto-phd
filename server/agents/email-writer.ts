@@ -65,6 +65,8 @@ USER PREFERENCES:
 - Looking for: ${fundingText}
 - Preferred Start: ${input.preferredStart}
 - Research Interests: ${input.researchInterests}
+- Additional Notes: ${input.additionalNotes || 'N/A'}
+- PhD / Job Posting Content: ${input.postingContent || 'N/A'}
 
 REQUIREMENTS:
 1. Length: 200-250 words (strict)

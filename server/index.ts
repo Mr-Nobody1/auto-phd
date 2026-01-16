@@ -30,6 +30,8 @@ app.post('/api/generate', async (c) => {
     const fundingStatus = (formData.get('fundingStatus') as string) || 'fully_funded';
     const researchInterests = formData.get('researchInterests') as string;
     const preferredStart = formData.get('preferredStart') as string;
+    const additionalNotes = formData.get('additionalNotes') as string;
+    const postingContent = formData.get('postingContent') as string;
     const cvFile = formData.get('cvFile') as File;
 
     // Validate required fields
@@ -53,6 +55,8 @@ app.post('/api/generate', async (c) => {
       fundingStatus: fundingStatus as UserInput['fundingStatus'],
       researchInterests: researchInterests || '',
       preferredStart: preferredStart || 'Fall 2026',
+      additionalNotes: additionalNotes || '',
+      postingContent: postingContent || '',
       cvText,
     };
 
@@ -66,7 +70,9 @@ app.post('/api/generate', async (c) => {
         const sendEvent = (event: string, data: unknown) => {
           if (isClosed) return;
           try {
-            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+            const dataStr = JSON.stringify(data);
+            console.log(`📡 Sending SSE event: ${event}, length: ${dataStr.length}`);
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${dataStr}\n\n`));
           } catch (error) {
             console.error('Failed to send event:', error);
             isClosed = true;

@@ -1,14 +1,14 @@
 import { callGeminiJSON } from '../tools/gemini';
-import type { FitAnalysis, UserProfile, ProfessorProfile } from '../types';
+import type { FitAnalysis, UserProfile, ProfessorProfile, UserInput } from '../types';
 
 /**
  * Fit Analyzer Agent
- * Analyzes fit between user and professor, selects best paper to reference
+ * Analyzes fit between user and professor/posting, selects best paper to reference
  */
 export async function analyzeFit(
   userProfile: UserProfile,
   professorProfile: ProfessorProfile,
-  researchInterests: string,
+  input: UserInput,
   onStatus: (status: string) => void
 ): Promise<FitAnalysis> {
   onStatus('Comparing research backgrounds...');
@@ -24,7 +24,13 @@ Skills: ${userProfile.skills.join(', ')}
 Summary: ${userProfile.summary}
 
 USER'S STATED RESEARCH INTERESTS:
-${researchInterests}
+${input.researchInterests}
+
+ADDITIONAL NOTES:
+${input.additionalNotes || 'N/A'}
+
+PHD / JOB POSTING CONTENT (If available):
+${input.postingContent || 'N/A'}
 
 PROFESSOR PROFILE:
 Name: ${professorProfile.name}

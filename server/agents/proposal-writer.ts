@@ -35,6 +35,8 @@ APPLICANT BACKGROUND:
   ${userProfile.publications.map((p) => `• ${p.title} (${p.venue}, ${p.year}) - ${p.role}`).join('\n  ') || 'None yet'}
 - Technical Skills: ${userProfile.skills.join(', ')}
 - Stated Research Interests: ${input.researchInterests}
+- Additional Notes: ${input.additionalNotes || 'N/A'}
+- PhD / Job Posting Content: ${input.postingContent || 'N/A'}
 
 PROFESSOR'S RESEARCH:
 - Name: ${professorProfile.name}
@@ -118,7 +120,7 @@ Write the complete research proposal now.`;
   const proposalText = await callGemini(prompt, {
     useProModel: true,
     temperature: 0.6,
-    maxTokens: 4000,
+    maxTokens: 12000,
   });
 
   onStatus('Extracting references...');

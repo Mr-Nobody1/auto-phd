@@ -105,38 +105,65 @@ async function handleSubmit(e) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let currentEventType = '';
+
+    console.log('📡 SSE Stream started');
 
     while (true) {
       const { done, value } = await reader.read();
 
-      if (done) break;
+      if (done) {
+        console.log('📡 SSE Stream closed');
+        // Process any remaining data in the buffer
+        if (buffer.trim()) {
+          console.log('📡 Processing final buffer chunk:', buffer);
+          processBuffer(buffer);
+        }
+        break;
+      }
 
-      buffer += decoder.decode(value, { stream: true });
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
 
-      // Process complete events
+      // Process complete lines
       const lines = buffer.split('\n');
       buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-      let eventType = '';
-      let eventData = '';
+      processLines(lines);
+    }
 
+    function processLines(lines) {
       for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7);
-        } else if (line.startsWith('data: ')) {
-          eventData = line.slice(6);
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
 
+        console.log('📡 SSE Line:', line);
+
+        if (line.startsWith('event: ')) {
+          currentEventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6).trim();
+          console.log(`📡 SSE Event [${currentEventType}] received, length: ${dataStr.length}`);
+          
           try {
-            const data = JSON.parse(eventData);
-            handleSSEEvent(eventType, data);
+            const data = JSON.parse(dataStr);
+            handleSSEEvent(currentEventType, data);
           } catch (err) {
-            console.error('Failed to parse SSE data:', err);
+            console.error('❌ Failed to parse SSE JSON data:', err);
+            console.error('Data string that failed:', dataStr);
           }
+          // Reset event type after processing data
+          currentEventType = '';
         }
       }
     }
+
+    function processBuffer(buf) {
+      const lines = buf.split('\n');
+      processLines(lines);
+    }
   } catch (error) {
-    console.error('Generation error:', error);
+    console.error('❌ Generation error:', error);
     alert('An error occurred: ' + error.message);
     showSection('form');
   } finally {

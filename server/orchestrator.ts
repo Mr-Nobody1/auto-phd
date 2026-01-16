@@ -5,24 +5,27 @@ import type {
   GenerationResult,
   PaperContext,
   PaperCandidate,
+  AdditionalPaperResult,
 } from './types';
 import { parseCV } from './agents/cv-parser';
 import { researchProfessor } from './agents/professor-researcher';
-import { selectPapers, shouldContinueGathering } from './agents/paper-selector';
+import { selectPapers, shouldContinueGathering, suggestAdditionalPapers } from './agents/paper-selector';
 import { analyzeFit } from './agents/fit-analyzer';
 import { writeEmail } from './agents/email-writer';
 import { recommendCVChanges } from './agents/cv-recommender';
 import { writeMotivationLetter } from './agents/motivation-writer';
 import { writeResearchProposal } from './agents/proposal-writer';
-import { downloadOpenAccessPdf } from './tools/academic-api';
+import { downloadOpenAccessPdf, searchPaperByTitle } from './tools/academic-api';
 import { parsePDFBuffer } from './tools/pdf';
 
 export type StatusCallback = (status: AgentStatus) => void;
 
 // Configuration for the paper selection loop
 const PAPER_CONFIG = {
-  maxPapers: 5,       // Maximum papers to download
+  maxPapers: 5,       // Maximum professor papers to download
   maxIterations: 5,   // Maximum selection iterations
+  maxAdditionalPapers: 3,     // Maximum additional papers beyond professor's
+  maxAdditionalIterations: 3, // Maximum iterations for additional paper suggestions
 };
 
 const AGENTS = [
@@ -214,14 +217,128 @@ export async function runPipeline(
       console.log(`📚 Continue gathering: ${continueResult.reason}`);
     }
 
+    // ========== Step 3b: Additional Papers Loop ==========
+    // AI suggests, searches, and downloads additional relevant papers
+    console.log('\n📚 === ADDITIONAL PAPERS SEARCH ===' );
+    updateStatus(3, { currentAction: 'Searching for additional relevant papers...' });
+
+    const allDownloadedPapers = Array.from(paperContext.downloadedContent.keys());
+    const additionalPaperResults: AdditionalPaperResult[] = [];
+    let additionalDownloaded = 0;
+    let additionalIteration = 0;
+
+    while (
+      additionalIteration < PAPER_CONFIG.maxAdditionalIterations &&
+      additionalDownloaded < PAPER_CONFIG.maxAdditionalPapers
+    ) {
+      additionalIteration++;
+      console.log(`\n📚 Additional papers iteration ${additionalIteration}/${PAPER_CONFIG.maxAdditionalIterations}`);
+
+      // Ask AI to suggest additional papers (with feedback from previous attempts)
+      const additionalDecision = await suggestAdditionalPapers(
+        context.userProfile!,
+        input.researchInterests,
+        allDownloadedPapers,
+        additionalPaperResults,
+        (action) => updateStatus(3, { currentAction: action })
+      );
+
+      // If AI suggests no more papers, we're done
+      if (additionalDecision.suggestedPapers.length === 0) {
+        console.log('📚 AI decided no additional papers needed');
+        break;
+      }
+
+      // Search and download each suggested paper
+      for (const suggestion of additionalDecision.suggestedPapers) {
+        if (additionalDownloaded >= PAPER_CONFIG.maxAdditionalPapers) {
+          console.log('📚 Reached max additional papers limit');
+          break;
+        }
+
+        updateStatus(3, {
+          currentAction: `Searching: ${suggestion.title.slice(0, 35)}...`,
+        });
+
+        const result: AdditionalPaperResult = {
+          suggestion,
+          success: false,
+        };
+
+        try {
+          // Search for the paper on OpenAlex
+          const foundPaper = await searchPaperByTitle(suggestion.title, suggestion.keywords);
+
+          if (!foundPaper || !foundPaper.pdfUrl) {
+            result.error = 'Paper not found or no open access PDF available';
+            console.log(`⚠️ Not found: "${suggestion.title.slice(0, 40)}..."`);
+          } else {
+            // Download the PDF
+            updateStatus(3, {
+              currentAction: `Downloading: ${foundPaper.title.slice(0, 35)}...`,
+            });
+
+            const pdfBuffer = await downloadOpenAccessPdf(foundPaper.pdfUrl);
+
+            if (pdfBuffer) {
+              const buffer = Buffer.from(pdfBuffer);
+              const text = await parsePDFBuffer(buffer);
+
+              if (text && text.length > 100) {
+                // Success! Add to downloaded content
+                paperContext.downloadedContent.set(foundPaper.title, text.slice(0, 5000));
+                allDownloadedPapers.push(foundPaper.title);
+                additionalDownloaded++;
+
+                result.success = true;
+                result.paper = {
+                  title: foundPaper.title,
+                  year: foundPaper.year,
+                  abstract: foundPaper.abstract,
+                  pdfUrl: foundPaper.pdfUrl,
+                };
+                result.contentExtracted = true;
+
+                console.log(`✅ Downloaded additional paper: "${foundPaper.title.slice(0, 40)}..."`);
+              } else {
+                result.error = 'Could not extract text from PDF';
+                console.log(`⚠️ Text extraction failed: "${foundPaper.title.slice(0, 40)}..."`);
+              }
+            } else {
+              result.error = 'PDF download failed';
+              console.log(`⚠️ PDF download failed: "${foundPaper.title.slice(0, 40)}..."`);
+            }
+          }
+        } catch (error) {
+          result.error = String(error);
+          console.log(`⚠️ Error processing: "${suggestion.title.slice(0, 40)}..."`);
+        }
+
+        additionalPaperResults.push(result);
+      }
+
+      // Check if AI wants to suggest more
+      if (!additionalDecision.shouldSuggestMore) {
+        console.log('📚 AI is satisfied with additional papers');
+        break;
+      }
+    }
+
+    console.log(`\n📊 Additional papers summary:`);
+    console.log(`   - Downloaded: ${additionalDownloaded}`);
+    console.log(`   - Failed: ${additionalPaperResults.filter(r => !r.success).length}`);
+    console.log(`   - Iterations: ${additionalIteration}`);
+
     updateStatus(3, {
       status: 'complete',
-      currentAction: `Downloaded ${paperContext.totalDownloaded} papers`,
+      currentAction: `Downloaded ${paperContext.totalDownloaded} professor + ${additionalDownloaded} additional papers`,
       progress: 100,
       output: {
         totalDownloaded: paperContext.totalDownloaded,
+        additionalDownloaded,
         iterations: iteration,
         papers: Array.from(paperContext.downloadedContent.keys()),
+        additionalResults: additionalPaperResults,
       },
     });
 
@@ -231,7 +348,7 @@ export async function runPipeline(
     context.fitAnalysis = await analyzeFit(
       context.userProfile!,
       context.professorProfile!,
-      input.researchInterests,
+      input,
       (action) => {
         updateStatus(4, { currentAction: action });
       }

@@ -3,7 +3,10 @@ import type {
   UserProfile, 
   PaperCandidate, 
   PaperSelectionDecision,
-  PaperContext 
+  PaperContext,
+  AdditionalPaperSuggestion,
+  AdditionalPaperResult,
+  AdditionalPapersDecision
 } from '../types';
 
 /**
@@ -288,3 +291,114 @@ Respond with JSON:
     };
   }
 }
+
+/**
+ * Suggest additional relevant papers beyond the professor's publications
+ * The AI receives feedback about previous download attempts to improve suggestions
+ */
+export async function suggestAdditionalPapers(
+  userProfile: UserProfile,
+  researchInterests: string,
+  downloadedPapers: string[],
+  previousResults: AdditionalPaperResult[],
+  onStatus: (status: string) => void
+): Promise<AdditionalPapersDecision> {
+  onStatus('AI analyzing for additional relevant papers...');
+
+  // Build feedback section from previous attempts
+  let feedbackSection = '';
+  if (previousResults.length > 0) {
+    feedbackSection = '\n\nPREVIOUS SEARCH RESULTS:\n';
+    for (const result of previousResults) {
+      if (result.success) {
+        feedbackSection += `✅ SUCCESS: "${result.suggestion.title}" - Found and downloaded\n`;
+      } else {
+        feedbackSection += `❌ FAILED: "${result.suggestion.title}" - ${result.error || 'Not found on OpenAlex'}\n`;
+      }
+    }
+    feedbackSection += '\nUse this feedback to improve your suggestions. Avoid suggesting papers that are likely unavailable.';
+  }
+
+  const prompt = `You are a research assistant helping a PhD applicant find additional relevant papers to read.
+
+APPLICANT PROFILE:
+- Name: ${userProfile.name}
+- Skills: ${userProfile.skills.join(', ')}
+- Research Interests: ${researchInterests}
+- Publications: ${userProfile.publications.map((p) => p.title).join('; ') || 'None'}
+
+ALREADY DOWNLOADED PAPERS:
+${downloadedPapers.length > 0 ? downloadedPapers.map((t, i) => `${i + 1}. "${t}"`).join('\n') : 'None yet'}
+${feedbackSection}
+
+TASK: Suggest up to 3 additional HIGHLY RELEVANT research papers that would help the applicant:
+1. Understand the research area better
+2. Find potential research directions
+3. Demonstrate knowledge in their outreach emails
+
+IMPORTANT GUIDELINES:
+- Suggest REAL, well-known papers that are likely to be found in academic databases (OpenAlex, arXiv, ACL Anthology)
+- Prefer papers from top venues (NeurIPS, ICML, ACL, CVPR, Nature, Science, etc.)
+- Prefer papers from the last 5 years for relevance
+- Prefer papers that are likely to have open access PDFs (arXiv, conference proceedings)
+- Do NOT suggest papers similar to ones that already failed to download
+
+Respond with JSON:
+{
+  "suggestedPapers": [
+    {
+      "title": "Exact or close paper title",
+      "keywords": ["optional", "search", "keywords"],
+      "reason": "Why this paper is relevant"
+    }
+  ],
+  "reasoning": "Why these papers were chosen and how they complement existing downloads",
+  "shouldSuggestMore": boolean (true if more papers would be helpful after these)
+}
+
+If no more papers are needed (enough context already), return empty suggestedPapers array.`;
+
+  try {
+    const decision = await callGeminiJSON<AdditionalPapersDecision>(prompt, {
+      useProModel: true,
+      temperature: 0.4,
+    });
+
+    // Validate response
+    if (!decision.suggestedPapers) {
+      decision.suggestedPapers = [];
+    }
+    if (!decision.reasoning) {
+      decision.reasoning = 'Additional paper suggestions generated.';
+    }
+    if (typeof decision.shouldSuggestMore !== 'boolean') {
+      decision.shouldSuggestMore = false;
+    }
+
+    // Limit to 3 suggestions
+    decision.suggestedPapers = decision.suggestedPapers.slice(0, 3);
+
+    console.log(`📚 AI Additional Paper Suggestions:
+  - Suggested: ${decision.suggestedPapers.length}
+  - Should suggest more: ${decision.shouldSuggestMore}
+  - Reasoning: ${decision.reasoning}`);
+
+    if (decision.suggestedPapers.length > 0) {
+      decision.suggestedPapers.forEach((p, i) => {
+        console.log(`   ${i + 1}. "${p.title}" - ${p.reason}`);
+      });
+    }
+
+    onStatus(`AI suggested ${decision.suggestedPapers.length} additional papers`);
+
+    return decision;
+  } catch (error) {
+    console.error('Additional paper suggestion error:', error);
+    return {
+      suggestedPapers: [],
+      reasoning: 'Error generating suggestions.',
+      shouldSuggestMore: false,
+    };
+  }
+}
+

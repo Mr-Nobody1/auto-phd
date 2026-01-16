@@ -61,6 +61,8 @@ USER PREFERENCES:
 - Language: ${language}
 - Funding Status: ${input.fundingStatus}
 - Preferred Start: ${input.preferredStart}
+- Additional Notes: ${input.additionalNotes || 'N/A'}
+- PhD / Job Posting Content: ${input.postingContent || 'N/A'}
 
 STRUCTURE (600-800 words total):
 
@@ -122,7 +124,7 @@ Write the complete motivation letter now. Output ONLY the letter text, properly 
   const letterText = await callGemini(prompt, {
     useProModel: true,
     temperature: 0.7,
-    maxTokens: 2000,
+    maxTokens: 8000,
   });
 
   onStatus('Finalizing motivation letter...');
