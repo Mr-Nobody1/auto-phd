@@ -8,14 +8,18 @@
     "pdf2json": "^4.0.1"
   },
   "scripts": {
-    "dev": "bun run --watch server/index.ts",
-    "start": "bun run server/index.ts"
+    "dev": "bun scripts/dev.mjs",
+    "dev:node": "bun --watch server/index.ts",
+    "dev:py": "python -m uvicorn app.main:app --app-dir autogen_service --reload --port 8001",
+    "start": "bun server/index.ts",
+    "start:py": "python -m uvicorn app.main:app --app-dir autogen_service --host 0.0.0.0 --port 8001"
   },
   "type": "module",
   "devDependencies": {
     "@hono/node-server": "^1.19.9",
     "@types/node": "^25.0.9",
     "playwright": "1.58.0-alpha-2026-01-15",
-    "tsx": "^4.21.0"
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }

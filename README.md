@@ -1,106 +1,112 @@
-# PhDApply - AI-Powered PhD Application Assistant
+# PhDApply - AutoGen Edition
 
-A multi-agent AI system that helps you prepare comprehensive PhD application materials. Powered by Gemini AI.
+PhDApply now runs with a **Microsoft AutoGen Python backend** for orchestration and a **Node/Hono frontend gateway** for UI and SSE proxying.
+
+## Architecture
+
+- `server/index.ts`: serves frontend and proxies `/api/generate` SSE to Python service
+- `autogen_service/app/main.py`: FastAPI AutoGen service (`/generate`)
+- `autogen_service/app/pipeline.py`: 8-step AutoGen pipeline (same status/event contract)
+- `public/*`: unchanged UI flow with an added optional image context upload
 
 ## Features
 
-- 🔍 **Professor Research** - Automatically researches professor's work, papers, and interests
-- 📧 **Personalized Emails** - Generates tailored cold emails with specific paper references  
-- 📄 **CV Recommendations** - Detailed suggestions for tailoring your CV
-- 💭 **Motivation Letters** - Complete, structured motivation letters
-- 📋 **Research Proposals** - Detailed proposals aligned with professor's work
-- ⚡ **Real-time Progress** - Watch each agent work in real-time
+- 8-step autonomous agent pipeline (same UI progress steps)
+- Optional image context (`contextImage`) for additional signal
+- Autonomous web context retrieval with bounded steps/timeouts
+- Academic API context (OpenAlex)
+- No DB or persistent memory usage (request-scoped in-memory only)
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org) v18+ (Bun has compatibility issues with Playwright)
-- [Gemini API Key](https://makersuite.google.com/app/apikey)
+- Node.js 18+
+- Python 3.11+
+- `GEMINI_API_KEY`
 
 ## Setup
 
-1. **Clone and install dependencies:**
-   ```bash
-   npm install
-   ```
+1. Install Node dependencies:
 
-2. **Set up environment variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   Then edit `.env` and add your Gemini API key.
-
-3. **Install Playwright browsers (first time only):**
-   ```bash
-   npx playwright install chromium
-   ```
-
-4. **Start the server:**
-   ```bash
-   npx tsx --watch server/index.ts
-
-   ```
-
-5. **Open in browser:**
-   ```
-   http://localhost:3000
-   ```
-
-## Usage
-
-1. Enter the professor's name and university
-2. Select position language and funding status
-3. Upload your CV (PDF format)
-4. Add your research interests
-5. Click "Generate Application Materials"
-6. Watch the agents work in real-time
-7. Review and copy your generated materials
-
-## Project Structure
-
-```
-phd-apply/
-├── server/                 # Backend
-│   ├── index.ts           # Hono server
-│   ├── orchestrator.ts    # Agent coordination
-│   ├── types.ts           # TypeScript types
-│   ├── agents/            # AI Agents
-│   │   ├── cv-parser.ts
-│   │   ├── professor-researcher.ts
-│   │   ├── fit-analyzer.ts
-│   │   ├── email-writer.ts
-│   │   ├── cv-recommender.ts
-│   │   ├── motivation-writer.ts
-│   │   └── proposal-writer.ts
-│   └── tools/             # Utilities
-│       ├── gemini.ts
-│       ├── browser.ts
-│       └── pdf.ts
-├── public/                # Frontend
-│   ├── index.html
-│   ├── styles.css
-│   └── app.js
-└── package.json
+```bash
+npm install
 ```
 
-## Agents Pipeline
+2. Install Python dependencies:
 
-1. **CV Parser** - Extracts structured info from your CV
-2. **Professor Researcher** - Scrapes faculty pages + uses Semantic Scholar/OpenAlex APIs
-3. **Fit Analyzer** - Analyzes alignment and selects best paper to reference
-4. **Email Writer** - Crafts personalized cold email
-5. **CV Recommender** - Suggests specific CV changes
-6. **Motivation Letter Writer** - Writes full motivation letter
-7. **Research Proposal Writer** - Creates detailed research proposal
+```bash
+pip install -e ./autogen_service --no-build-isolation
+```
 
-## Tech Stack
+3. Configure environment:
 
-- **Runtime**: Node.js + tsx
-- **Backend**: Hono (+ SSE for real-time updates)
-- **AI**: Gemini 1.5 (Flash + Pro)
-- **Scraping**: Playwright (faculty pages only)
-- **Academic Data**: Semantic Scholar & OpenAlex APIs
-- **PDF**: pdf2json
-- **Frontend**: Vanilla JS + CSS
+```bash
+cp .env.example .env
+```
+
+Set at least:
+
+- `GEMINI_API_KEY`
+- `GEMINI_OPENAI_BASE_URL`
+- `AUTOGEN_MODEL`
+- `AUTOGEN_SERVICE_URL`
+
+## Run
+
+Run both services together:
+
+```bash
+npm run dev
+```
+
+Run individually:
+
+```bash
+npm run dev:node
+npm run dev:py
+```
+
+Open:
+
+- `http://localhost:3000`
+
+## API Contract
+
+`POST /api/generate` (multipart form-data), SSE response events:
+
+- `status`
+- `complete`
+- `error`
+
+Required fields:
+
+- `professorName`
+- `university`
+- `cvFile`
+
+Optional fields include:
+
+- `contextImage`
+- `researchInterests`
+- `postingContent`
+- `additionalNotes`
+
+## Environment Variables
+
+See `.env.example` for defaults:
+
+- `GEMINI_API_KEY`
+- `GEMINI_OPENAI_BASE_URL`
+- `AUTOGEN_MODEL`
+- `AUTOGEN_SERVICE_URL`
+- `WEB_ALLOWED_DOMAINS`
+- `WEB_MAX_STEPS`
+- `WEB_TIMEOUT_SECONDS`
+- `PORT`
+
+## Notes
+
+- The legacy TypeScript agent files remain in `server/agents` for rollback/reference, but are not used at runtime.
+- This phase intentionally does not use any SQL/vector/Redis DB.
 
 ## License
 

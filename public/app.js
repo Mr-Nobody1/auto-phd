@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupFormHandlers();
   setupTabHandlers();
   setupFileUpload();
+  setupImageUpload();
 });
 
 // ============ Form Handlers ============
@@ -60,6 +61,27 @@ function setupFileUpload() {
     } else {
       cvFileName.textContent = 'Click to upload or drag & drop (PDF)';
       cvUpload.classList.remove('has-file');
+    }
+  });
+}
+
+function setupImageUpload() {
+  const contextImage = document.getElementById('contextImage');
+  const contextImageUpload = document.getElementById('contextImageUpload');
+  const contextImageFileName = document.getElementById('contextImageFileName');
+
+  if (!contextImage || !contextImageUpload || !contextImageFileName) {
+    return;
+  }
+
+  contextImage.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      contextImageFileName.textContent = file.name;
+      contextImageUpload.classList.add('has-file');
+    } else {
+      contextImageFileName.textContent = 'Upload optional screenshot/image context';
+      contextImageUpload.classList.remove('has-file');
     }
   });
 }
@@ -476,6 +498,14 @@ function startNew() {
   applicationForm.reset();
   document.getElementById('cvFileName').textContent = 'Click to upload or drag & drop (PDF)';
   document.getElementById('cvUpload').classList.remove('has-file');
+  const contextImageFileName = document.getElementById('contextImageFileName');
+  const contextImageUpload = document.getElementById('contextImageUpload');
+  if (contextImageFileName) {
+    contextImageFileName.textContent = 'Upload optional screenshot/image context';
+  }
+  if (contextImageUpload) {
+    contextImageUpload.classList.remove('has-file');
+  }
   showSection('form');
 }
 

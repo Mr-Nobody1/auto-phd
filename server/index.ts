@@ -1,106 +1,103 @@
 import 'dotenv/config';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { runPipeline, type StatusCallback } from './orchestrator';
-import { parsePDFBuffer } from './tools/pdf';
-import { closeBrowser } from './tools/browser';
-import type { UserInput, AgentStatus } from './types';
 import { readFileSync } from 'fs';
 
 const app = new Hono();
+const AUTOGEN_SERVICE_URL = (process.env.AUTOGEN_SERVICE_URL || 'http://127.0.0.1:8001').replace(/\/$/, '');
 
-// Enable CORS
 app.use('/*', cors());
 
-// Health check
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', timestamp: new Date().toISOString() });
+  return c.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    autogenServiceUrl: AUTOGEN_SERVICE_URL,
+  });
 });
 
-// Main generation endpoint with SSE
+function createSseErrorResponse(errorMessage: string, status = 200): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const payload = JSON.stringify({ error: errorMessage });
+      controller.enqueue(encoder.encode(`event: error\ndata: ${payload}\n\n`));
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    status,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
+function copyFormData(original: FormData): FormData {
+  const forwarded = new FormData();
+
+  for (const [key, value] of original.entries()) {
+    if (typeof value === 'string') {
+      forwarded.append(key, value);
+      continue;
+    }
+
+    if (value instanceof File && value.size > 0) {
+      forwarded.append(key, value, value.name);
+    }
+  }
+
+  return forwarded;
+}
+
 app.post('/api/generate', async (c) => {
   try {
     const formData = await c.req.formData();
 
-    // Extract form fields
-    const professorName = formData.get('professorName') as string;
-    const university = formData.get('university') as string;
-    const language = (formData.get('language') as string) || 'english';
-    const customLanguage = formData.get('customLanguage') as string;
-    const fundingStatus = (formData.get('fundingStatus') as string) || 'fully_funded';
-    const researchInterests = formData.get('researchInterests') as string;
-    const preferredStart = formData.get('preferredStart') as string;
-    const additionalNotes = formData.get('additionalNotes') as string;
-    const postingContent = formData.get('postingContent') as string;
-    const cvFile = formData.get('cvFile') as File;
+    const professorName = String(formData.get('professorName') || '').trim();
+    const university = String(formData.get('university') || '').trim();
+    const cvFile = formData.get('cvFile');
 
-    // Validate required fields
     if (!professorName || !university) {
       return c.json({ error: 'Professor name and university are required' }, 400);
     }
 
-    if (!cvFile) {
+    if (!(cvFile instanceof File) || cvFile.size === 0) {
       return c.json({ error: 'CV file is required' }, 400);
     }
 
-    // Parse CV
-    const cvBuffer = Buffer.from(await cvFile.arrayBuffer());
-    const cvText = await parsePDFBuffer(cvBuffer);
+    const upstreamFormData = copyFormData(formData);
 
-    const input: UserInput = {
-      professorName,
-      university,
-      language: language as UserInput['language'],
-      customLanguage: customLanguage || undefined,
-      fundingStatus: fundingStatus as UserInput['fundingStatus'],
-      researchInterests: researchInterests || '',
-      preferredStart: preferredStart || 'Fall 2026',
-      additionalNotes: additionalNotes || '',
-      postingContent: postingContent || '',
-      cvText,
-    };
+    let upstreamResponse: Response;
+    try {
+      upstreamResponse = await fetch(`${AUTOGEN_SERVICE_URL}/generate`, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+        },
+        body: upstreamFormData,
+      });
+    } catch (error) {
+      console.error('Failed to connect to AutoGen service:', error);
+      return createSseErrorResponse(
+        `AutoGen service is unavailable at ${AUTOGEN_SERVICE_URL}. Start the Python service and try again.`
+      );
+    }
 
-    // Create SSE response with controller state tracking
-    let isClosed = false;
-    
-    const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder();
+    if (!upstreamResponse.ok) {
+      const errorBody = await upstreamResponse.text().catch(() => '');
+      const preview = errorBody ? ` ${errorBody.slice(0, 300)}` : '';
+      return createSseErrorResponse(`AutoGen service returned ${upstreamResponse.status}.${preview}`);
+    }
 
-        const sendEvent = (event: string, data: unknown) => {
-          if (isClosed) return;
-          try {
-            const dataStr = JSON.stringify(data);
-            console.log(`📡 Sending SSE event: ${event}, length: ${dataStr.length}`);
-            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${dataStr}\n\n`));
-          } catch (error) {
-            console.error('Failed to send event:', error);
-            isClosed = true;
-          }
-        };
+    if (!upstreamResponse.body) {
+      return createSseErrorResponse('AutoGen service returned an empty stream.');
+    }
 
-        const onStatus: StatusCallback = (status: AgentStatus) => {
-          sendEvent('status', status);
-        };
-
-        try {
-          // Run the pipeline
-          const result = await runPipeline(input, cvText, onStatus);
-
-          // Send final result
-          sendEvent('complete', result);
-        } catch (error) {
-          sendEvent('error', { error: String(error) });
-        } finally {
-          if (!isClosed) {
-            isClosed = true;
-            controller.close();
-          }
-        }
-      },
-    });
-
-    return new Response(stream, {
+    return new Response(upstreamResponse.body, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -108,18 +105,16 @@ app.post('/api/generate', async (c) => {
       },
     });
   } catch (error) {
-    console.error('API error:', error);
-    return c.json({ error: String(error) }, 500);
+    console.error('API proxy error:', error);
+    return createSseErrorResponse(String(error));
   }
 });
 
-// Serve the frontend
 app.get('/', async (c) => {
   const html = readFileSync('./public/index.html', 'utf-8');
   return c.html(html);
 });
 
-// Serve static files
 app.get('/public/*', async (c) => {
   const path = '.' + c.req.path;
   try {
@@ -132,33 +127,11 @@ app.get('/public/*', async (c) => {
   }
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('Shutting down...');
-  await closeBrowser();
-  process.exit(0);
-});
-
 const port = Number(process.env.PORT) || 3000;
 
-// Support both Bun and Node.js
-const isBun = typeof globalThis.Bun !== 'undefined';
-
-if (!isBun) {
-  // Running in Node.js - start server immediately
-  const { serve } = await import('@hono/node-server');
-  console.log(`🚀 PhDApply server running at http://localhost:${port} (Node.js)`);
-  serve({
-    fetch: app.fetch,
-    port,
-  });
-} else {
-  console.log(`🚀 PhDApply server running at http://localhost:${port} (Bun)`);
-}
-
-// Export for Bun
-export default {
-  port,
+const { serve } = await import('@hono/node-server');
+console.log(`PhDApply server running at http://localhost:${port}`);
+serve({
   fetch: app.fetch,
-  idleTimeout: 255,
-};
+  port,
+});
